@@ -1,52 +1,65 @@
+extern crate vec_map;
+
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use std::iter::Map;
-use std::slice::Iter;
 
-use self::Status::{Todo, Done};
+use vec_map::VecMap;
 
 fn main() {
-    test(FakeTodoList::new());
+    test(FakeTodoList::new()).unwrap();
 }
 
-fn test<T>(mut tasks: T)
+fn test<T>(mut tasks: T) -> Result<()>
     where T: TodoList + Display {
     print!("\n=== Initial ===\n");
 
-    let start = tasks.add(String::from("Start making ado"));
-    let rusqlite = tasks.add(String::from("Try rusqlite"));
-    let onion = tasks.add(String::from("Implement an onion architecture"));
-    let rewrite = tasks.add(String::from("Start a simplified rewrite of ado"));
-    tasks.add(String::from("Refine the design of ado"));
+    let start = tasks.open(String::from("Start making ado"));
+    let rusqlite = tasks.open(String::from("Try rusqlite"));
+    let onion = tasks.open(String::from("Implement an onion architecture"));
+    let rewrite = tasks.open(String::from("Start a simplified rewrite of ado"));
+    tasks.open(String::from("Refine the design of ado"));
 
     println!("{}", tasks);
 
-    print!("\n=== Now ===\n");
+    print!("\n=== First attempt ===\n");
 
-    tasks.finish(start);
-    tasks.finish(rusqlite);
-    tasks.finish(rewrite);
+    try!(tasks.update(start, Task::finish));
+    try!(tasks.update(rusqlite, Task::finish));
 
     println!("{}", tasks);
 
-    print!("\n=== After ===\n");
+    print!("\n=== Restart ===\n");
 
-    tasks.each(Task::finish);
+    try!(tasks.update(rewrite, Task::finish));
 
     println!("{}", tasks);
 
     print!("\n=== Clean ===\n");
 
-    tasks.remove(onion);
+    try!(tasks.update(onion, Task::abandon));
 
     println!("{}", tasks);
+
+    print!("\n=== Next steps ===\n");
+
+    try!(tasks.update(rusqlite, Task::reopen));
+
+    println!("{}", tasks);
+
+    Ok(())
 }
 
-struct FakeTodoList(Vec<Task>);
+struct FakeTodoList {
+    tasks: VecMap<Task>,
+    next_id: usize,
+}
 
 impl FakeTodoList {
     fn new() -> FakeTodoList {
-        FakeTodoList(Vec::new())
+        FakeTodoList {
+            tasks: VecMap::new(),
+            next_id: 0,
+        }
     }
 }
 
@@ -57,32 +70,85 @@ struct Task {
 }
 
 enum Status {
-    Todo,
+    Open,
     Done,
+    Wont,
+}
+
+type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug)]
+enum Error {
+    AlreadyOpen,
+    AlreadyDone,
+    AlreadyWont,
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", std::error::Error::description(self))
+    }
+}
+
+impl std::error::Error for Error {
+    fn description(&self) -> &str {
+        match *self {
+            Error::AlreadyOpen => "The task is already open",
+            Error::AlreadyDone => "The task is already finished",
+            Error::AlreadyWont => "The task has already been abandoned",
+        }
+    }
 }
 
 trait TodoList {
-    type IdType;
+    type IdType: Copy;
 
-    fn add(&mut self, name: String) -> Self::IdType;
-    fn remove(&mut self, id: Self::IdType) -> Task;
-    fn update<F>(&mut self, id: Self::IdType, f: F) where F: FnOnce(&mut Task);
-    fn each<F>(&mut self, mut f: F) where F: FnMut(&mut Task);
-    fn map <F, R>(&self, f: F) -> Map<Iter<Task>, F> where F: FnMut(&Task) -> R;
-    fn finish(&mut self, id: Self::IdType);
+    fn open(&mut self, name: String) -> Self::IdType;
+
+    fn each<F>(&mut self, f: F) where F: FnMut(&mut Task);
+    fn update<F, R>(&mut self, id: Self::IdType, f: F) -> R
+        where F: FnOnce(&mut Task) -> R;
 }
 
 impl Task {
-    fn finish(&mut self) {
-        self.status = Done;
+    fn finish(&mut self) -> Result<()>{
+        match self.status {
+            Status::Done => Err(Error::AlreadyDone),
+            _ => {
+                self.status = Status::Done;
+                Ok(())
+            }
+        }
+    }
+
+    fn abandon(&mut self) -> Result<()>{
+        match self.status {
+            Status::Done => Err(Error::AlreadyDone),
+            Status::Wont => Err(Error::AlreadyWont),
+            _ => {
+                self.status = Status::Wont;
+                Ok(())
+            }
+        }
+    }
+
+    fn reopen(&mut self) -> Result<()>{
+        match self.status {
+            Status::Open => Err(Error::AlreadyOpen),
+            _ => {
+                self.status = Status::Open;
+                Ok(())
+            }
+        }
     }
 }
 
 impl Display for Task {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let check = match self.status {
-            Todo => "[ ]",
-            Done => "[x]",
+            Status::Open => "[ ]",
+            Status::Done => "[x]",
+            Status::Wont => " X ",
         };
         write!(f, "{} {}", check, self.name)
     }
@@ -91,42 +157,41 @@ impl Display for Task {
 impl TodoList for FakeTodoList {
     type IdType = usize;
 
-    fn add(&mut self, name: String) -> Self::IdType {
-        self.0.push(Task {
-            status: Todo,
+    fn open(&mut self, name: String) -> Self::IdType {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        self.tasks.insert(id, Task {
+            status: Status::Open,
             name: name,
         });
-        self.0.len()
+
+        id
     }
 
-    fn remove(&mut self, id: Self::IdType) -> Task {
-        self.0.remove(id)
-    }
-
-    fn update<F>(&mut self, id: Self::IdType, f: F) where F: FnOnce(&mut Task) {
-        f(&mut self.0[id]);
+    fn update<F, R>(&mut self, id: Self::IdType, f: F) -> R
+        where F: FnOnce(&mut Task) -> R {
+        f(&mut self.tasks[id])
     }
 
     fn each<F>(&mut self, mut f: F) where F: FnMut(&mut Task) {
-        for i in 0..self.0.len() {
-            self.update(i, &mut f);
+        for (_, mut task) in self.tasks.iter_mut() {
+            f(task)
         }
-    }
-
-    fn map <F, R>(&self, f: F) -> Map<Iter<Task>, F>
-    where F: FnMut(&Task) -> R {
-        self.0.iter().map(f)
-    }
-
-    fn finish(&mut self, id: Self::IdType) {
-        self.0[id].finish();
     }
 }
 
 impl Display for FakeTodoList {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        let joined = self.map(|task| format!("{}", task)).collect::<Vec<_>>().join("\n");
-        write!(f, "{}", joined)
+        let list_format = self.tasks.values()
+            .filter(|task| match task.status {
+                Status::Wont => false,
+                _ => true,
+            })
+            .map(|task| format!("{}", task))
+            .collect::<Vec<_>>()
+            .join("\n");
+        write!(f, "{}", list_format)
     }
 }
 
