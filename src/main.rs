@@ -17,6 +17,18 @@ fn main() {
         tasks: todo_list,
     };
 
+    let mut todo_list = FakeTodoList::new();
+    todo_list.create_finished("Start making ado");
+    todo_list.create_finished("Try rusqlite");
+    todo_list.create_abandoned("Implement a onion architecture");
+    todo_list.create_finished("Start simplified rewrite of ado");
+    todo_list.create("Refine the design of ado");
+    todo_list.create("Make ado interactive");
+    todo_list.create("Implement new task creation");
+    todo_list.create("Implement persistence");
+    todo_list.create("Have ado use unbuffered input");
+    todo_list.create("Eliminate the 'history' e.g. by redrawing the screen");
+
     let stdin = std::io::stdin();
     for key in stdin.lock().chars() {
         match key.unwrap() {
@@ -71,11 +83,11 @@ fn test<T>(tasks: &mut T) -> Result<()>
     where T: TodoList + Display
 {
     print!("\n=== Initial ===\n");
-    let start = tasks.create(String::from("Start making ado"));
-    let rusqlite = tasks.create(String::from("Try rusqlite"));
-    let onion = tasks.create(String::from("Implement an onion architecture"));
-    let rewrite = tasks.create(String::from("Start a simplified rewrite of ado"));
-    tasks.create(String::from("Refine the design of ado"));
+    let start = tasks.create("Start making ado");
+    let rusqlite = tasks.create("Try rusqlite");
+    let onion = tasks.create("Implement an onion architecture");
+    let rewrite = tasks.create("Start a simplified rewrite of ado");
+    tasks.create("Refine the design of ado");
     println!("{}", tasks);
 
     print!("\n=== First attempt ===\n");
@@ -93,7 +105,11 @@ fn test<T>(tasks: &mut T) -> Result<()>
 
     print!("\n=== Next steps ===\n");
     try!(tasks.update(rusqlite, Task::create));
-    tasks.create(String::from("Make ado interactive"));
+    tasks.create("Make ado interactive");
+    tasks.create("Implement new task creation");
+    tasks.create("Implement persistence");
+    tasks.create("Have ado use unbuffered input");
+    tasks.create("Eliminate the 'history' e.g. by redrawing the screen");
     println!("{}", tasks);
 
     Ok(())
@@ -162,7 +178,7 @@ impl std::error::Error for Error {
 trait TodoList {
     type IdType: Copy;
 
-    fn create(&mut self, name: String) -> Self::IdType;
+    fn create(&mut self, name: &str) -> Self::IdType;
 
     fn each<F>(&mut self, f: F) where F: FnMut(&mut Task);
     fn update<F, R>(&mut self, id: Self::IdType, f: F) -> R where F: FnOnce(&mut Task) -> R;
@@ -172,6 +188,18 @@ trait TodoList {
     fn contains_key(&self, id: Self::IdType) -> bool;
     fn next_id(&self, id: Self::IdType) -> Option<Self::IdType>;
     fn next_back_id(&self, id: Self::IdType) -> Option<Self::IdType>;
+
+    fn create_finished(&mut self, name: &str) -> Result<Self::IdType> {
+        let id = self.create(name);
+        try!(self.update(id, Task::finish));
+        Ok(id)
+    }
+
+    fn create_abandoned(&mut self, name: &str) -> Result<Self::IdType> {
+        let id = self.create(name);
+        try!(self.update(id, Task::abandon));
+        Ok(id)
+    }
 }
 
 impl Task {
@@ -221,14 +249,14 @@ impl Display for Task {
 impl TodoList for FakeTodoList {
     type IdType = usize;
 
-    fn create(&mut self, name: String) -> Self::IdType {
+    fn create(&mut self, name: &str) -> Self::IdType {
         let id = self.next_id;
         self.next_id += 1;
 
         self.tasks.insert(id,
                           Task {
                               status: Status::Open,
-                              name: name,
+                              name: String::from(name),
                           });
 
         id
