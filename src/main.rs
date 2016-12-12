@@ -1,3 +1,5 @@
+#![feature(io)]
+
 extern crate vec_map;
 
 use std::fmt;
@@ -6,44 +8,46 @@ use std::fmt::{Display, Formatter};
 use vec_map::VecMap;
 
 fn main() {
+    use std::io::Read;
+
     test(FakeTodoList::new()).unwrap();
+
+    let stdin = std::io::stdin();
+    for key in stdin.lock().chars() {
+        match key.unwrap() {
+            'q' => break,
+            key => println!("Received key: {}; press q to quit", key),
+        }
+    }
 }
 
 fn test<T>(mut tasks: T) -> Result<()>
-    where T: TodoList + Display {
+    where T: TodoList + Display
+{
     print!("\n=== Initial ===\n");
-
-    let start = tasks.open(String::from("Start making ado"));
-    let rusqlite = tasks.open(String::from("Try rusqlite"));
-    let onion = tasks.open(String::from("Implement an onion architecture"));
-    let rewrite = tasks.open(String::from("Start a simplified rewrite of ado"));
-    tasks.open(String::from("Refine the design of ado"));
-
+    let start = tasks.create(String::from("Start making ado"));
+    let rusqlite = tasks.create(String::from("Try rusqlite"));
+    let onion = tasks.create(String::from("Implement an onion architecture"));
+    let rewrite = tasks.create(String::from("Start a simplified rewrite of ado"));
+    tasks.create(String::from("Refine the design of ado"));
     println!("{}", tasks);
 
     print!("\n=== First attempt ===\n");
-
     try!(tasks.update(start, Task::finish));
     try!(tasks.update(rusqlite, Task::finish));
-
     println!("{}", tasks);
 
     print!("\n=== Restart ===\n");
-
     try!(tasks.update(rewrite, Task::finish));
-
     println!("{}", tasks);
 
     print!("\n=== Clean ===\n");
-
     try!(tasks.update(onion, Task::abandon));
-
     println!("{}", tasks);
 
     print!("\n=== Next steps ===\n");
-
-    try!(tasks.update(rusqlite, Task::reopen));
-
+    try!(tasks.update(rusqlite, Task::create));
+    tasks.create(String::from("Make ado interactive"));
     println!("{}", tasks);
 
     Ok(())
@@ -93,7 +97,7 @@ impl Display for Error {
 impl std::error::Error for Error {
     fn description(&self) -> &str {
         match *self {
-            Error::AlreadyOpen => "The task is already open",
+            Error::AlreadyOpen => "The task is already.create",
             Error::AlreadyDone => "The task is already finished",
             Error::AlreadyWont => "The task has already been abandoned",
         }
@@ -103,15 +107,14 @@ impl std::error::Error for Error {
 trait TodoList {
     type IdType: Copy;
 
-    fn open(&mut self, name: String) -> Self::IdType;
+    fn create(&mut self, name: String) -> Self::IdType;
 
     fn each<F>(&mut self, f: F) where F: FnMut(&mut Task);
-    fn update<F, R>(&mut self, id: Self::IdType, f: F) -> R
-        where F: FnOnce(&mut Task) -> R;
+    fn update<F, R>(&mut self, id: Self::IdType, f: F) -> R where F: FnOnce(&mut Task) -> R;
 }
 
 impl Task {
-    fn finish(&mut self) -> Result<()>{
+    fn finish(&mut self) -> Result<()> {
         match self.status {
             Status::Done => Err(Error::AlreadyDone),
             _ => {
@@ -121,7 +124,7 @@ impl Task {
         }
     }
 
-    fn abandon(&mut self) -> Result<()>{
+    fn abandon(&mut self) -> Result<()> {
         match self.status {
             Status::Done => Err(Error::AlreadyDone),
             Status::Wont => Err(Error::AlreadyWont),
@@ -132,7 +135,7 @@ impl Task {
         }
     }
 
-    fn reopen(&mut self) -> Result<()>{
+    fn create(&mut self) -> Result<()> {
         match self.status {
             Status::Open => Err(Error::AlreadyOpen),
             _ => {
@@ -157,24 +160,28 @@ impl Display for Task {
 impl TodoList for FakeTodoList {
     type IdType = usize;
 
-    fn open(&mut self, name: String) -> Self::IdType {
+    fn create(&mut self, name: String) -> Self::IdType {
         let id = self.next_id;
         self.next_id += 1;
 
-        self.tasks.insert(id, Task {
-            status: Status::Open,
-            name: name,
-        });
+        self.tasks.insert(id,
+                          Task {
+                              status: Status::Open,
+                              name: name,
+                          });
 
         id
     }
 
     fn update<F, R>(&mut self, id: Self::IdType, f: F) -> R
-        where F: FnOnce(&mut Task) -> R {
+        where F: FnOnce(&mut Task) -> R
+    {
         f(&mut self.tasks[id])
     }
 
-    fn each<F>(&mut self, mut f: F) where F: FnMut(&mut Task) {
+    fn each<F>(&mut self, mut f: F)
+        where F: FnMut(&mut Task)
+    {
         for (_, mut task) in self.tasks.iter_mut() {
             f(task)
         }
@@ -183,7 +190,8 @@ impl TodoList for FakeTodoList {
 
 impl Display for FakeTodoList {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        let list_format = self.tasks.values()
+        let list_format = self.tasks
+            .values()
             .filter(|task| match task.status {
                 Status::Wont => false,
                 _ => true,
@@ -194,4 +202,3 @@ impl Display for FakeTodoList {
         write!(f, "{}", list_format)
     }
 }
-
