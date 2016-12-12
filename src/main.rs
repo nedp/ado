@@ -12,7 +12,7 @@ fn main() {
 
     let mut todo_list = FakeTodoList::new();
     test(&mut todo_list).unwrap();
-    let task_picker: TaskPicker<FakeTodoList> = TaskPicker {
+    let mut task_picker: TaskPicker<FakeTodoList> = TaskPicker {
         position: 0,
         tasks: todo_list,
     };
@@ -22,6 +22,8 @@ fn main() {
         match key.unwrap() {
             'q' => break,
             '\n' => println!("{}\n press q to quit", task_picker),
+            'j' => task_picker.down(),
+            'k' => task_picker.up(),
             _ => continue,
         }
     }
@@ -30,6 +32,26 @@ fn main() {
 struct TaskPicker<T> {
     position: usize,
     tasks: T,
+}
+
+impl<T, I> TaskPicker<T>
+where T: TodoList<IdType = I>,
+      I: Copy + From<usize>,
+      usize: From<I>,
+{
+    fn down(&mut self) {
+        self.position = match self.tasks.next_id(I::from(self.position)) {
+            None => self.position,
+            Some(i) => usize::from(i),
+        }
+    }
+
+    fn up(&mut self) {
+        self.position = match self.tasks.next_back_id(I::from(self.position)) {
+            None => self.position,
+            Some(i) => usize::from(i),
+        }
+    }
 }
 
 impl<T> Display for TaskPicker<T>
@@ -146,6 +168,10 @@ trait TodoList {
     fn update<F, R>(&mut self, id: Self::IdType, f: F) -> R where F: FnOnce(&mut Task) -> R;
 
     fn enumerate<F>(&self, f: F) where F: FnMut(usize, &Task);
+
+    fn contains_key(&self, id: Self::IdType) -> bool;
+    fn next_id(&self, id: Self::IdType) -> Option<Self::IdType>;
+    fn next_back_id(&self, id: Self::IdType) -> Option<Self::IdType>;
 }
 
 impl Task {
@@ -227,6 +253,26 @@ impl TodoList for FakeTodoList {
     {
         for (id, mut task) in self.tasks.iter() {
             f(id, task);
+        }
+    }
+
+    fn contains_key(&self, id: Self::IdType) -> bool {
+        self.tasks.contains_key(id)
+    }
+
+    fn next_id(&self, id: Self::IdType) -> Option<Self::IdType> {
+        if id < self.next_id - 1 {
+            Some(id + 1)
+        } else {
+            None
+        }
+    }
+
+    fn next_back_id(&self, id: Self::IdType) -> Option<Self::IdType> {
+        if id > 0 {
+            Some(id - 1)
+        } else {
+            None
         }
     }
 }
