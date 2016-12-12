@@ -1,86 +1,132 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
+use std::iter::Map;
+use std::slice::Iter;
+
+use self::Status::{Todo, Done};
+
+fn main() {
+    test(FakeTodoList::new());
+}
+
+fn test<T>(mut tasks: T)
+    where T: TodoList + Display {
+    print!("\n=== Initial ===\n");
+
+    let start = tasks.add(String::from("Start making ado"));
+    let rusqlite = tasks.add(String::from("Try rusqlite"));
+    let onion = tasks.add(String::from("Implement an onion architecture"));
+    let rewrite = tasks.add(String::from("Start a simplified rewrite of ado"));
+    tasks.add(String::from("Refine the design of ado"));
+
+    println!("{}", tasks);
+
+    print!("\n=== Now ===\n");
+
+    tasks.finish(start);
+    tasks.finish(rusqlite);
+    tasks.finish(rewrite);
+
+    println!("{}", tasks);
+
+    print!("\n=== After ===\n");
+
+    tasks.each(Task::finish);
+
+    println!("{}", tasks);
+
+    print!("\n=== Clean ===\n");
+
+    tasks.remove(onion);
+
+    println!("{}", tasks);
+}
+
+struct FakeTodoList(Vec<Task>);
+
+impl FakeTodoList {
+    fn new() -> FakeTodoList {
+        FakeTodoList(Vec::new())
+    }
+}
 
 
-use self::Task::{Todo, Done};
+struct Task {
+    status: Status,
+    name: String,
+}
 
-enum Task {
-    Todo(String),
-    Done(String),
+enum Status {
+    Todo,
+    Done,
+}
+
+trait TodoList {
+    type IdType;
+
+    fn add(&mut self, name: String) -> Self::IdType;
+    fn remove(&mut self, id: Self::IdType) -> Task;
+    fn update<F>(&mut self, id: Self::IdType, f: F) where F: FnOnce(&mut Task);
+    fn each<F>(&mut self, mut f: F) where F: FnMut(&mut Task);
+    fn map <F, R>(&self, f: F) -> Map<Iter<Task>, F> where F: FnMut(&Task) -> R;
+    fn finish(&mut self, id: Self::IdType);
 }
 
 impl Task {
-    fn finish(self) -> Self {
-        match self {
-            Todo(name) | Done(name) => Done(name),
-        }
+    fn finish(&mut self) {
+        self.status = Done;
     }
 }
 
 impl Display for Task {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            &Todo(ref name) => write!(f, "[ ] {}", name),
-            &Done(ref name) => write!(f, "[x] {}", name),
-        }
+        let check = match self.status {
+            Todo => "[ ]",
+            Done => "[x]",
+        };
+        write!(f, "{} {}", check, self.name)
     }
 }
 
-fn main() {
-    print!("\n=== Initial ===\n");
+impl TodoList for FakeTodoList {
+    type IdType = usize;
 
-    let mut tasks = TaskSource(Vec::new());
-    let start = tasks.add(String::from("Start making ado"));
-    let rusqlite = tasks.add(String::from("Try rusqlite"));
-    let onion = tasks.add(String::from("Implement an onion architecture"));
-    let rewrite = tasks.add(String::from("Start a simplified rewrite of ado"));
-    let refine = tasks.add(String::from("Refine the design of ado"));
-
-    tasks = tasks.map(|task| {
-        println!("{}", task);
-        task
-    });
-
-    print!("\n=== Now ===\n");
-
-    tasks.update(start, Task::finish);
-    tasks.update(rusqlite, Task::finish);
-    tasks.update(rewrite, Task::finish);
-
-    tasks = tasks.map(|task| {
-        println!("{}", task);
-        task
-    });
-
-    print!("\n=== After ===\n");
-
-    tasks = tasks.map(Task::finish);
-
-    tasks.map(|task| {
-        println!("{}", task);
-        task
-    });
-}
-
-struct TaskSource(Vec<Task>);
-
-type IdType = usize;
-
-impl TaskSource {
-    fn add(&mut self, name: String) -> IdType {
-        self.0.push(Todo(name));
+    fn add(&mut self, name: String) -> Self::IdType {
+        self.0.push(Task {
+            status: Todo,
+            name: name,
+        });
         self.0.len()
     }
 
-    fn update<F>(&mut self, id: IdType, f: F) where F: FnOnce(Task) -> Task {
-        let task = self.0.swap_remove(id);
-        self.0.push(f(task));
-        let len = self.0.len();
-        self.0.swap(id, len - 1);
+    fn remove(&mut self, id: Self::IdType) -> Task {
+        self.0.remove(id)
     }
 
-    fn map<F>(self, f: F) -> Self where F: FnMut(Task) -> Task {
-        let new_tasks = self.0.into_iter().map(f).collect::<Vec<_>>();
-        TaskSource(new_tasks)
+    fn update<F>(&mut self, id: Self::IdType, f: F) where F: FnOnce(&mut Task) {
+        f(&mut self.0[id]);
+    }
+
+    fn each<F>(&mut self, mut f: F) where F: FnMut(&mut Task) {
+        for i in 0..self.0.len() {
+            self.update(i, &mut f);
+        }
+    }
+
+    fn map <F, R>(&self, f: F) -> Map<Iter<Task>, F>
+    where F: FnMut(&Task) -> R {
+        self.0.iter().map(f)
+    }
+
+    fn finish(&mut self, id: Self::IdType) {
+        self.0[id].finish();
     }
 }
+
+impl Display for FakeTodoList {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let joined = self.map(|task| format!("{}", task)).collect::<Vec<_>>().join("\n");
+        write!(f, "{}", joined)
+    }
+}
+
