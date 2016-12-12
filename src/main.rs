@@ -10,18 +10,42 @@ use vec_map::VecMap;
 fn main() {
     use std::io::Read;
 
-    test(FakeTodoList::new()).unwrap();
+    let mut todo_list = FakeTodoList::new();
+    test(&mut todo_list).unwrap();
+    let task_picker: TaskPicker<FakeTodoList> = TaskPicker {
+        position: 0,
+        tasks: todo_list,
+    };
 
     let stdin = std::io::stdin();
     for key in stdin.lock().chars() {
         match key.unwrap() {
             'q' => break,
-            key => println!("Received key: {}; press q to quit", key),
+            '\n' => println!("{}\n press q to quit", task_picker),
+            _ => continue,
         }
     }
 }
 
-fn test<T>(mut tasks: T) -> Result<()>
+struct TaskPicker<T> {
+    position: usize,
+    tasks: T,
+}
+
+impl<T> Display for TaskPicker<T>
+where T: Display + TodoList
+{
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let mut strings = Vec::new();
+        self.tasks.enumerate(|id, task| {
+            let marker = if id == self.position { ">" } else { " " };
+            strings.push(format!("{} {}", marker, task));
+        });
+        write!(f, "{}", strings.join("\n"))
+    }
+}
+
+fn test<T>(tasks: &mut T) -> Result<()>
     where T: TodoList + Display
 {
     print!("\n=== Initial ===\n");
@@ -67,7 +91,6 @@ impl FakeTodoList {
     }
 }
 
-
 struct Task {
     status: Status,
     name: String,
@@ -77,6 +100,16 @@ enum Status {
     Open,
     Done,
     Wont,
+}
+
+impl Display for Status {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match *self {
+            Status::Open => write!(f, "[ ]"),
+            Status::Done => write!(f, "[x]"),
+            Status::Wont => write!(f, " X "),
+        }
+    }
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -111,6 +144,8 @@ trait TodoList {
 
     fn each<F>(&mut self, f: F) where F: FnMut(&mut Task);
     fn update<F, R>(&mut self, id: Self::IdType, f: F) -> R where F: FnOnce(&mut Task) -> R;
+
+    fn enumerate<F>(&self, f: F) where F: FnMut(usize, &Task);
 }
 
 impl Task {
@@ -183,7 +218,15 @@ impl TodoList for FakeTodoList {
         where F: FnMut(&mut Task)
     {
         for (_, mut task) in self.tasks.iter_mut() {
-            f(task)
+            f(task);
+        }
+    }
+
+    fn enumerate<F>(&self, mut f: F)
+        where F: FnMut(usize, &Task)
+    {
+        for (id, mut task) in self.tasks.iter() {
+            f(id, task);
         }
     }
 }
