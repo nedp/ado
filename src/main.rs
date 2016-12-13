@@ -1,15 +1,15 @@
 #![feature(io)]
 
+extern crate ncurses;
 extern crate vec_map;
 
 use std::fmt;
 use std::fmt::{Display, Formatter};
+use std::io::Read;
 
 use vec_map::VecMap;
 
 fn main() {
-    use std::io::Read;
-
     let mut todo_list = FakeTodoList::new();
     test(&mut todo_list).unwrap();
     let mut task_picker: TaskPicker<FakeTodoList> = TaskPicker {
@@ -18,27 +18,43 @@ fn main() {
     };
 
     let mut todo_list = FakeTodoList::new();
-    todo_list.create_finished("Start making ado");
-    todo_list.create_finished("Try rusqlite");
-    todo_list.create_abandoned("Implement a onion architecture");
-    todo_list.create_finished("Start simplified rewrite of ado");
+    todo_list.create_finished("Start making ado").unwrap();
+    todo_list.create_finished("Try rusqlite").unwrap();
+    todo_list.create_abandoned("Implement a onion architecture").unwrap();
+    todo_list.create_finished("Start simplified rewrite of ado").unwrap();
     todo_list.create("Refine the design of ado");
-    todo_list.create("Make ado interactive");
+    todo_list.create_finished("Make ado interactive");
     todo_list.create("Implement new task creation");
     todo_list.create("Implement persistence");
-    todo_list.create("Have ado use unbuffered input");
-    todo_list.create("Eliminate the 'history' e.g. by redrawing the screen");
+    todo_list.create_finished("Have ado use unbuffered input");
+    todo_list.create_finished("Eliminate the 'history' e.g. by redrawing the screen");
 
-    let stdin = std::io::stdin();
-    for key in stdin.lock().chars() {
-        match key.unwrap() {
+    gui(&mut task_picker).unwrap();
+}
+
+fn gui<T>(task_picker: &mut TaskPicker<T>) -> Result<()>
+where T: TodoList<IdType = usize>,
+      T: Display
+{
+    ::ncurses::initscr();
+    ::ncurses::noecho();
+    ::ncurses::printw(&format!("{}", task_picker));
+    ::ncurses::refresh();
+
+    loop {
+        match char::from(::ncurses::getch() as u8) {
             'q' => break,
-            '\n' => println!("{}\n press q to quit", task_picker),
             'j' => task_picker.down(),
             'k' => task_picker.up(),
             _ => continue,
         }
+        ::ncurses::clear();
+        ::ncurses::printw(&format!("{}", task_picker));
+        ::ncurses::refresh();
     }
+
+    ::ncurses::endwin();
+    Ok(())
 }
 
 struct TaskPicker<T> {
@@ -279,7 +295,7 @@ impl TodoList for FakeTodoList {
     fn enumerate<F>(&self, mut f: F)
         where F: FnMut(usize, &Task)
     {
-        for (id, mut task) in self.tasks.iter() {
+        for (id, task) in self.tasks.iter() {
             f(id, task);
         }
     }
