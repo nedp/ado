@@ -53,6 +53,13 @@ where T: TodoList<IdType = usize>,
             'q' => break,
             'j' => task_picker.down(),
             'k' => task_picker.up(),
+            'z' => {
+                match char::from(::ncurses::getch() as u8) {
+                    'o' => task_picker.reopen(),
+                    'c' => task_picker.abandon(),
+                    _ => continue,
+                }
+            }
             ' ' => task_picker.toggle(),
             _ => continue,
         };
@@ -105,6 +112,14 @@ where T: TodoList<IdType = I>,
 
     fn toggle(&mut self) -> Result<()> {
         self.tasks.toggle(I::from(self.position))
+    }
+
+    fn abandon(&mut self) -> Result<()> {
+        self.tasks.update(I::from(self.position), Task::abandon)
+    }
+
+    fn reopen(&mut self) -> Result<()> {
+        self.tasks.update(I::from(self.position), Task::open)
     }
 }
 
@@ -300,7 +315,7 @@ impl Display for Task {
         let check = match self.status {
             Status::Open => "[ ]",
             Status::Done => "[x]",
-            Status::Wont => " X ",
+            Status::Wont => "---",
         };
         write!(f, "{} {}", check, self.name)
     }
