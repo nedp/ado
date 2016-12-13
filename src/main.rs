@@ -14,13 +14,15 @@ fn main() {
     todo_list.create_finished("Start simplified rewrite of ado").unwrap();
     todo_list.create("Refine the design of ado");
     todo_list.create_finished("Make ado interactive").unwrap();
-    todo_list.create("Implement new task creation");
+    todo_list.create_finished("Implement new task creation").unwrap();
     todo_list.create("Implement persistence");
     todo_list.create_finished("Have ado use unbuffered input").unwrap();
     todo_list.create_finished("Eliminate the 'history' e.g. by redrawing the screen").unwrap();
     todo_list.create_finished("Implement task status toggling (done/open)").unwrap();
     todo_list.create_finished("Implement task status toggling (open/closed)").unwrap();
     todo_list.create_finished("Hide the cursor").unwrap();
+    todo_list.create("Create a help screen");
+    todo_list.create("Refactor next and next_back to a list of ids");
     let mut task_picker: TaskPicker<FakeTodoList> = TaskPicker {
         position: 0,
         tasks: todo_list,
@@ -51,6 +53,17 @@ where T: TodoList<IdType = usize>,
                 'j' => task_picker.down(),
                 'k' => task_picker.up(),
                 'l' => task_picker.right(),
+
+                'o' => {
+                    ::ncurses::printw("\nEnter a task summary:\n");
+                    ::ncurses::echo();
+                    ::ncurses::curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_VISIBLE);
+                    let mut name = String::new();
+                    ::ncurses::getstr(&mut name);
+                    ::ncurses::noecho();
+                    ::ncurses::curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_INVISIBLE);
+                    task_picker.create(name).map(|_| ())
+                }
 
                 _ => continue,
             },
@@ -110,6 +123,10 @@ where T: TodoList<IdType = I>,
     fn left(&mut self) -> Result<()> {
         let _ = self.tasks.update(I::from(self.position), Task::goto_next_back_status);
         Ok(())
+    }
+
+    fn create(&mut self, name: String) -> Result<I> {
+        Ok(self.tasks.create(&name))
     }
 }
 
