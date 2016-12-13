@@ -26,6 +26,7 @@ fn main() {
     todo_list.create_finished("Eliminate the 'history' e.g. by redrawing the screen");
     todo_list.create_finished("Implement task status toggling (done/open)");
     todo_list.create("Implement task status toggling (open/abandoned)");
+    todo_list.create_finished("Hide the cursor");
     let mut task_picker: TaskPicker<FakeTodoList> = TaskPicker {
         position: 0,
         tasks: todo_list,
@@ -42,6 +43,7 @@ where T: TodoList<IdType = usize>,
 
     ::ncurses::initscr();
     ::ncurses::noecho();
+    ::ncurses::curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_INVISIBLE);
 
     ::ncurses::printw(&format!("{}", task_picker));
     ::ncurses::refresh();
