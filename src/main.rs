@@ -12,10 +12,6 @@ use vec_map::VecMap;
 fn main() {
     let mut todo_list = FakeTodoList::new();
     test(&mut todo_list).unwrap();
-    let mut task_picker: TaskPicker<FakeTodoList> = TaskPicker {
-        position: 0,
-        tasks: todo_list,
-    };
 
     let mut todo_list = FakeTodoList::new();
     todo_list.create_finished("Start making ado").unwrap();
@@ -28,6 +24,12 @@ fn main() {
     todo_list.create("Implement persistence");
     todo_list.create_finished("Have ado use unbuffered input");
     todo_list.create_finished("Eliminate the 'history' e.g. by redrawing the screen");
+    todo_list.create_finished("Implement task status toggling (done/open)");
+    todo_list.create("Implement task status toggling (open/abandoned)");
+    let mut task_picker: TaskPicker<FakeTodoList> = TaskPicker {
+        position: 0,
+        tasks: todo_list,
+    };
 
     gui(&mut task_picker).unwrap();
 }
@@ -36,18 +38,33 @@ fn gui<T>(task_picker: &mut TaskPicker<T>) -> Result<()>
 where T: TodoList<IdType = usize>,
       T: Display
 {
+    use std::error::Error;
+
     ::ncurses::initscr();
     ::ncurses::noecho();
+
     ::ncurses::printw(&format!("{}", task_picker));
     ::ncurses::refresh();
 
     loop {
-        match char::from(::ncurses::getch() as u8) {
+        let result = match char::from(::ncurses::getch() as u8) {
             'q' => break,
             'j' => task_picker.down(),
             'k' => task_picker.up(),
+            ' ' => task_picker.toggle(),
             _ => continue,
-        }
+        };
+
+        match result {
+            Err(error) => {
+                ::ncurses::clear();
+                ::ncurses::printw(error.description());
+                ::ncurses::refresh();
+                ::ncurses::getch();
+            },
+            _ => {},
+        };
+
         ::ncurses::clear();
         ::ncurses::printw(&format!("{}", task_picker));
         ::ncurses::refresh();
@@ -66,19 +83,26 @@ impl<T, I> TaskPicker<T>
 where T: TodoList<IdType = I>,
       I: Copy + From<usize>,
       usize: From<I>,
+      I: From<usize>,
 {
-    fn down(&mut self) {
+    fn down(&mut self) -> Result<()> {
         self.position = match self.tasks.next_id(I::from(self.position)) {
             None => self.position,
             Some(i) => usize::from(i),
-        }
+        };
+        Ok(())
     }
 
-    fn up(&mut self) {
+    fn up(&mut self) -> Result<()> {
         self.position = match self.tasks.next_back_id(I::from(self.position)) {
             None => self.position,
             Some(i) => usize::from(i),
-        }
+        };
+        Ok(())
+    }
+
+    fn toggle(&mut self) -> Result<()> {
+        self.tasks.toggle(I::from(self.position))
     }
 }
 
@@ -205,6 +229,14 @@ trait TodoList {
     fn next_id(&self, id: Self::IdType) -> Option<Self::IdType>;
     fn next_back_id(&self, id: Self::IdType) -> Option<Self::IdType>;
 
+    fn toggle(&mut self, id: Self::IdType) -> Result<()> {
+        self.update(id, |task| match task.status {
+            Status::Done => task.open(),
+            Status::Open => task.finish(),
+            Status::Wont => Err(Error::AlreadyWont),
+        })
+    }
+
     fn create_finished(&mut self, name: &str) -> Result<Self::IdType> {
         let id = self.create(name);
         try!(self.update(id, Task::finish));
@@ -235,6 +267,16 @@ impl Task {
             Status::Wont => Err(Error::AlreadyWont),
             _ => {
                 self.status = Status::Wont;
+                Ok(())
+            }
+        }
+    }
+
+    fn open(&mut self) -> Result<()> {
+        match self.status {
+            Status::Open => Err(Error::AlreadyOpen),
+            _ => {
+                self.status = Status::Open;
                 Ok(())
             }
         }
