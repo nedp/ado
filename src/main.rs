@@ -1,32 +1,26 @@
-#![feature(io)]
-
 extern crate ncurses;
 extern crate vec_map;
 
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use std::io::Read;
 
 use vec_map::VecMap;
 
 fn main() {
     let mut todo_list = FakeTodoList::new();
-    test(&mut todo_list).unwrap();
-
-    let mut todo_list = FakeTodoList::new();
     todo_list.create_finished("Start making ado").unwrap();
     todo_list.create_finished("Try rusqlite").unwrap();
-    todo_list.create_abandoned("Implement a onion architecture").unwrap();
+    todo_list.create_closed("Implement a onion architecture").unwrap();
     todo_list.create_finished("Start simplified rewrite of ado").unwrap();
     todo_list.create("Refine the design of ado");
-    todo_list.create_finished("Make ado interactive");
+    todo_list.create_finished("Make ado interactive").unwrap();
     todo_list.create("Implement new task creation");
     todo_list.create("Implement persistence");
-    todo_list.create_finished("Have ado use unbuffered input");
-    todo_list.create_finished("Eliminate the 'history' e.g. by redrawing the screen");
-    todo_list.create_finished("Implement task status toggling (done/open)");
-    todo_list.create("Implement task status toggling (open/abandoned)");
-    todo_list.create_finished("Hide the cursor");
+    todo_list.create_finished("Have ado use unbuffered input").unwrap();
+    todo_list.create_finished("Eliminate the 'history' e.g. by redrawing the screen").unwrap();
+    todo_list.create_finished("Implement task status toggling (done/open)").unwrap();
+    todo_list.create_finished("Implement task status toggling (open/closed)").unwrap();
+    todo_list.create_finished("Hide the cursor").unwrap();
     let mut task_picker: TaskPicker<FakeTodoList> = TaskPicker {
         position: 0,
         tasks: todo_list,
@@ -49,19 +43,17 @@ where T: TodoList<IdType = usize>,
     ::ncurses::refresh();
 
     loop {
-        let result = match char::from(::ncurses::getch() as u8) {
-            'q' => break,
-            'j' => task_picker.down(),
-            'k' => task_picker.up(),
-            'z' => {
-                match char::from(::ncurses::getch() as u8) {
-                    'o' => task_picker.reopen(),
-                    'c' => task_picker.abandon(),
-                    _ => continue,
-                }
-            }
-            ' ' => task_picker.toggle(),
-            _ => continue,
+        let result = match ::ncurses::getch() {
+            x => match char::from(x as u8) {
+                'q' => break,
+
+                'h' => task_picker.left(),
+                'j' => task_picker.down(),
+                'k' => task_picker.up(),
+                'l' => task_picker.right(),
+
+                _ => continue,
+            },
         };
 
         match result {
@@ -110,16 +102,14 @@ where T: TodoList<IdType = I>,
         Ok(())
     }
 
-    fn toggle(&mut self) -> Result<()> {
-        self.tasks.toggle(I::from(self.position))
+    fn right(&mut self) -> Result<()> {
+        let _ = self.tasks.update(I::from(self.position), Task::goto_next_status);
+        Ok(())
     }
 
-    fn abandon(&mut self) -> Result<()> {
-        self.tasks.update(I::from(self.position), Task::abandon)
-    }
-
-    fn reopen(&mut self) -> Result<()> {
-        self.tasks.update(I::from(self.position), Task::open)
+    fn left(&mut self) -> Result<()> {
+        let _ = self.tasks.update(I::from(self.position), Task::goto_next_back_status);
+        Ok(())
     }
 }
 
@@ -132,44 +122,8 @@ where T: Display + TodoList
             let marker = if id == self.position { ">" } else { " " };
             strings.push(format!("{} {}", marker, task));
         });
-        write!(f, "{}", strings.join("\n"))
+        write!(f, "  WONT TODO DONE\n{}", strings.join("\n"))
     }
-}
-
-fn test<T>(tasks: &mut T) -> Result<()>
-    where T: TodoList + Display
-{
-    print!("\n=== Initial ===\n");
-    let start = tasks.create("Start making ado");
-    let rusqlite = tasks.create("Try rusqlite");
-    let onion = tasks.create("Implement an onion architecture");
-    let rewrite = tasks.create("Start a simplified rewrite of ado");
-    tasks.create("Refine the design of ado");
-    println!("{}", tasks);
-
-    print!("\n=== First attempt ===\n");
-    try!(tasks.update(start, Task::finish));
-    try!(tasks.update(rusqlite, Task::finish));
-    println!("{}", tasks);
-
-    print!("\n=== Restart ===\n");
-    try!(tasks.update(rewrite, Task::finish));
-    println!("{}", tasks);
-
-    print!("\n=== Clean ===\n");
-    try!(tasks.update(onion, Task::abandon));
-    println!("{}", tasks);
-
-    print!("\n=== Next steps ===\n");
-    try!(tasks.update(rusqlite, Task::create));
-    tasks.create("Make ado interactive");
-    tasks.create("Implement new task creation");
-    tasks.create("Implement persistence");
-    tasks.create("Have ado use unbuffered input");
-    tasks.create("Eliminate the 'history' e.g. by redrawing the screen");
-    println!("{}", tasks);
-
-    Ok(())
 }
 
 struct FakeTodoList {
@@ -200,9 +154,9 @@ enum Status {
 impl Display for Status {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match *self {
-            Status::Open => write!(f, "[ ]"),
-            Status::Done => write!(f, "[x]"),
-            Status::Wont => write!(f, " X "),
+            Status::Open => write!(f, "     [ ]      "),
+            Status::Done => write!(f, "           [x]"),
+            Status::Wont => write!(f, "----          "),
         }
     }
 }
@@ -211,7 +165,6 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 enum Error {
-    AlreadyOpen,
     AlreadyDone,
     AlreadyWont,
 }
@@ -225,9 +178,8 @@ impl Display for Error {
 impl std::error::Error for Error {
     fn description(&self) -> &str {
         match *self {
-            Error::AlreadyOpen => "The task is already.create",
             Error::AlreadyDone => "The task is already finished",
-            Error::AlreadyWont => "The task has already been abandoned",
+            Error::AlreadyWont => "The task has already been closed",
         }
     }
 }
@@ -246,31 +198,43 @@ trait TodoList {
     fn next_id(&self, id: Self::IdType) -> Option<Self::IdType>;
     fn next_back_id(&self, id: Self::IdType) -> Option<Self::IdType>;
 
-    fn toggle(&mut self, id: Self::IdType) -> Result<()> {
-        self.update(id, |task| match task.status {
-            Status::Done => task.open(),
-            Status::Open => task.finish(),
-            Status::Wont => Err(Error::AlreadyWont),
-        })
-    }
-
     fn create_finished(&mut self, name: &str) -> Result<Self::IdType> {
         let id = self.create(name);
         try!(self.update(id, Task::finish));
         Ok(id)
     }
 
-    fn create_abandoned(&mut self, name: &str) -> Result<Self::IdType> {
+    fn create_closed(&mut self, name: &str) -> Result<Self::IdType> {
         let id = self.create(name);
-        try!(self.update(id, Task::abandon));
+        try!(self.update(id, Task::close));
         Ok(id)
     }
 }
 
 impl Task {
+
+    fn goto_next_status(&mut self) -> Result<()> {
+        self.status = match self.status {
+            Status::Wont => Status::Open,
+            Status::Open => Status::Done,
+            Status::Done => return Err(Error::AlreadyDone),
+        };
+        Ok(())
+    }
+
+    fn goto_next_back_status(&mut self) -> Result<()> {
+        self.status = match self.status {
+            Status::Open => Status::Wont,
+            Status::Done => Status::Open,
+            Status::Wont => return Err(Error::AlreadyWont),
+        };
+        Ok(())
+    }
+
     fn finish(&mut self) -> Result<()> {
         match self.status {
             Status::Done => Err(Error::AlreadyDone),
+            Status::Wont => Err(Error::AlreadyWont),
             _ => {
                 self.status = Status::Done;
                 Ok(())
@@ -278,7 +242,7 @@ impl Task {
         }
     }
 
-    fn abandon(&mut self) -> Result<()> {
+    fn close(&mut self) -> Result<()> {
         match self.status {
             Status::Done => Err(Error::AlreadyDone),
             Status::Wont => Err(Error::AlreadyWont),
@@ -288,35 +252,11 @@ impl Task {
             }
         }
     }
-
-    fn open(&mut self) -> Result<()> {
-        match self.status {
-            Status::Open => Err(Error::AlreadyOpen),
-            _ => {
-                self.status = Status::Open;
-                Ok(())
-            }
-        }
-    }
-
-    fn create(&mut self) -> Result<()> {
-        match self.status {
-            Status::Open => Err(Error::AlreadyOpen),
-            _ => {
-                self.status = Status::Open;
-                Ok(())
-            }
-        }
-    }
 }
 
 impl Display for Task {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        let check = match self.status {
-            Status::Open => "[ ]",
-            Status::Done => "[x]",
-            Status::Wont => "---",
-        };
+        let check = format!("{}", self.status);
         write!(f, "{} {}", check, self.name)
     }
 }
