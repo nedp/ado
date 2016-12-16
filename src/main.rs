@@ -34,6 +34,8 @@ fn main() {
     };
 
     gui(&mut task_picker).unwrap();
+
+    FileTodoList::new();
 }
 
 fn gui<T>(task_picker: &mut TaskPicker<T>) -> Result<(), Error>
@@ -164,6 +166,32 @@ impl FakeTodoList {
         FakeTodoList {
             tasks: VecMap::new(),
             next_id: 0,
+        }
+    }
+}
+
+struct FileTodoList {
+    next_id: usize,
+}
+
+impl FileTodoList {
+    fn new() -> FileTodoList {
+        ::std::fs::DirBuilder::new()
+            .recursive(true)
+            .create(PATH).unwrap();
+
+        let max_id = ::std::fs::read_dir(PATH).unwrap()
+            .fold(0, |max, entry| {
+                  let id = entry.unwrap()
+                      .file_name()
+                      .into_string().unwrap()
+                      .parse().unwrap();
+                  if id > max { id } else { max }
+            });
+
+        println!("max_id: {}", max_id);
+        FileTodoList {
+            next_id: max_id + 1,
         }
     }
 }
