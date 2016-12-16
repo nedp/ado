@@ -12,41 +12,40 @@ use vec_map::VecMap;
 const PATH: &'static str = "./.ado/";
 
 fn main() {
-    let mut todo_list = FakeTodoList::new();
-    todo_list.create_finished("Start making ado").unwrap();
-    todo_list.create_finished("Try rusqlite").unwrap();
-    todo_list.create_closed("Implement a onion architecture").unwrap();
-    todo_list.create_finished("Start simplified rewrite of ado").unwrap();
-    todo_list.create("Refine the design of ado").unwrap();
-    todo_list.create_finished("Make ado interactive").unwrap();
-    todo_list.create_finished("Implement new task creation").unwrap();
-    todo_list.create("Implement persistence").unwrap();
-    todo_list.create_finished("Have ado use unbuffered input").unwrap();
-    todo_list.create_finished("Eliminate the stdout history").unwrap();
-    todo_list.create_finished("Implement task status toggling (done/open)").unwrap();
-    todo_list.create_finished("Implement task status toggling (open/closed)").unwrap();
-    todo_list.create_finished("Hide the cursor").unwrap();
-    todo_list.create("Create a help screen").unwrap();
-    todo_list.create("Refactor next and next_back to a list of ids").unwrap();
-    let mut task_picker: TaskPicker<FakeTodoList> = TaskPicker {
-        position: 0,
+    let mut todo_list = FileTodoList::new();
+    // todo_list.create_finished("Start making ado").unwrap();
+    // todo_list.create_finished("Try rusqlite").unwrap();
+    // todo_list.create_closed("Implement a onion architecture").unwrap();
+    // todo_list.create_finished("Start simplified rewrite of ado").unwrap();
+    // todo_list.create("Refine the design of ado").unwrap();
+    // todo_list.create_finished("Make ado interactive").unwrap();
+    // todo_list.create_finished("Implement new task creation").unwrap();
+    // todo_list.create("Implement persistence").unwrap();
+    // todo_list.create_finished("Have ado use unbuffered input").unwrap();
+    // todo_list.create_finished("Eliminate the stdout history").unwrap();
+    // todo_list.create_finished("Implement task status toggling (done/open)").unwrap();
+    // todo_list.create_finished("Implement task status toggling (open/closed)").unwrap();
+    // todo_list.create_finished("Hide the cursor").unwrap();
+    // todo_list.create("Create a help screen").unwrap();
+    // todo_list.create("Refactor next and next_back to a list of ids").unwrap();
+    let mut task_picker = TaskPicker {
+        position: todo_list.next_id(0).ok().or(Some(0)).unwrap(),
         tasks: todo_list,
     };
 
     gui(&mut task_picker).unwrap();
-
-    FileTodoList::new();
 }
 
 fn gui<T>(task_picker: &mut TaskPicker<T>) -> Result<(), Error>
     where T: TodoList<Id = usize>,
-          T: Display
 {
     use std::error::Error;
 
     ::ncurses::initscr();
     ::ncurses::noecho();
     ::ncurses::curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_INVISIBLE);
+    ::ncurses::noraw();
+    ::ncurses::cbreak();
 
     ::ncurses::printw(&format!("{}", task_picker));
     ::ncurses::refresh();
@@ -66,10 +65,12 @@ fn gui<T>(task_picker: &mut TaskPicker<T>) -> Result<(), Error>
                         ::ncurses::printw("\nEnter a task summary:\n");
                         ::ncurses::echo();
                         ::ncurses::curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_VISIBLE);
+                        ::ncurses::nocbreak();
                         let mut name = String::new();
                         ::ncurses::getstr(&mut name);
                         ::ncurses::noecho();
                         ::ncurses::curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_INVISIBLE);
+                        ::ncurses::cbreak();
                         task_picker.create(name).map(|_| ())
                     }
 
@@ -111,8 +112,8 @@ impl<T> TaskPicker<T>
     fn down(&mut self) -> Result<(), T::Error> {
         let id = T::Id::from(self.position);
         self.position = match self.tasks.next_id(id) {
-            None => self.position,
-            Some(i) => usize::from(i),
+            Err(_) => self.position,
+            Ok(i) => usize::from(i),
         };
         Ok(())
     }
@@ -120,8 +121,8 @@ impl<T> TaskPicker<T>
     fn up(&mut self) -> Result<(), T::Error> {
         let id = T::Id::from(self.position);
         self.position = match self.tasks.next_back_id(id) {
-            None => self.position,
-            Some(i) => usize::from(i),
+            Err(_) => self.position,
+            Ok(i) => usize::from(i),
         };
         Ok(())
     }
@@ -144,7 +145,7 @@ impl<T> TaskPicker<T>
 }
 
 impl<T> Display for TaskPicker<T>
-    where T: Display + TodoList
+    where T: TodoList
 {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let mut strings = Vec::new();
@@ -152,7 +153,7 @@ impl<T> Display for TaskPicker<T>
             let marker = if id == self.position { ">" } else { " " };
             strings.push(format!("{} {}", marker, task));
         });
-        write!(f, "  WONT TODO DONE\n{}", strings.join("\n"))
+        write!(f, "  Wont Open Done\n{}", strings.join("\n"))
     }
 }
 
@@ -169,42 +170,27 @@ impl FakeTodoList {
         }
     }
 }
-
-struct FileTodoList {
-    next_id: usize,
-}
-
-impl FileTodoList {
-    fn new() -> FileTodoList {
-        ::std::fs::DirBuilder::new()
-            .recursive(true)
-            .create(PATH).unwrap();
-
-        let max_id = ::std::fs::read_dir(PATH).unwrap()
-            .fold(0, |max, entry| {
-                  let id = entry.unwrap()
-                      .file_name()
-                      .into_string().unwrap()
-                      .parse().unwrap();
-                  if id > max { id } else { max }
-            });
-
-        println!("max_id: {}", max_id);
-        FileTodoList {
-            next_id: max_id + 1,
-        }
-    }
-}
-
 struct Task {
     status: Status,
     name: String,
 }
 
+#[derive(Debug)]
 enum Status {
     Open,
     Done,
     Wont,
+}
+
+impl <'a> From<&'a str> for Status {
+    fn from(source: &str) -> Status {
+        match source {
+            "Open" => Status::Open,
+            "Done" => Status::Done,
+            "Wont" => Status::Wont,
+            _ => panic!("Invalid status string"),
+        }
+    }
 }
 
 impl Display for Status {
@@ -221,6 +207,8 @@ impl Display for Status {
 enum Error {
     AlreadyDone,
     AlreadyWont,
+    Io(::std::io::Error),
+    NoSuchTask,
 }
 
 impl Display for Error {
@@ -234,7 +222,16 @@ impl std::error::Error for Error {
         match *self {
             Error::AlreadyDone => "The task is already finished",
             Error::AlreadyWont => "The task has already been closed",
+            Error::Io(_) => "An IO error occured",
+            Error::NoSuchTask => "No such task could be found",
         }
+    }
+}
+
+impl From<::std::io::Error> for Error {
+
+    fn from(cause: ::std::io::Error) -> Error {
+        Error::Io(cause)
     }
 }
 
@@ -246,14 +243,13 @@ trait TodoList {
 
     fn each<F>(&self, f: F) where F: FnMut(&Task);
 
-    fn update<F, R>(&mut self, id: Self::Id, f: F) -> R
+    fn update<F, R>(&mut self, id: Self::Id, f: F) -> Result<R, Self::Error>
         where F: FnOnce(&mut Task) -> R;
 
     fn enumerate<F>(&self, f: F) where F: FnMut(usize, &Task);
 
-    fn contains_key(&self, id: Self::Id) -> bool;
-    fn next_id(&self, id: Self::Id) -> Option<Self::Id>;
-    fn next_back_id(&self, id: Self::Id) -> Option<Self::Id>;
+    fn next_id(&self, id: Self::Id) -> Result<Self::Id, Self::Error>;
+    fn next_back_id(&self, id: Self::Id) -> Result<Self::Id, Self::Error>;
 
     fn create_finished(&mut self, name: &str) -> Result<Self::Id, Self::Error>
         where Self::Error: From<Error>
@@ -338,10 +334,10 @@ impl TodoList for FakeTodoList {
         Ok(id)
     }
 
-    fn update<F, R>(&mut self, id: Self::Id, f: F) -> R
+    fn update<F, R>(&mut self, id: Self::Id, f: F) -> Result<R, Error>
         where F: FnOnce(&mut Task) -> R
     {
-        f(&mut self.tasks[id])
+        Ok(f(&mut self.tasks[id]))
     }
 
     fn each<F>(&self, mut f: F)
@@ -360,20 +356,140 @@ impl TodoList for FakeTodoList {
         }
     }
 
-    fn contains_key(&self, id: Self::Id) -> bool {
-        self.tasks.contains_key(id)
-    }
-
-    fn next_id(&self, id: Self::Id) -> Option<Self::Id> {
+    fn next_id(&self, id: Self::Id) -> Result<Self::Id, Error> {
         if id < self.next_id - 1 {
-            Some(id + 1)
+            Ok(id + 1)
         } else {
-            None
+            Err(Error::NoSuchTask)
         }
     }
 
-    fn next_back_id(&self, id: Self::Id) -> Option<Self::Id> {
-        if id > 0 { Some(id - 1) } else { None }
+    fn next_back_id(&self, id: Self::Id) -> Result<Self::Id, Error> {
+        if id > 0 {
+            Ok(id - 1)
+        } else {
+            Err(Error::NoSuchTask)
+        }
+    }
+}
+
+
+struct FileTodoList {
+    next_id: usize,
+}
+
+impl FileTodoList {
+    fn new() -> FileTodoList {
+        ::std::fs::DirBuilder::new()
+            .recursive(true)
+            .create(PATH).unwrap();
+
+        let max_id = ::std::fs::read_dir(PATH).unwrap()
+            .fold(0, |max, entry| {
+                  let id = entry.unwrap()
+                      .file_name()
+                      .into_string().unwrap()
+                      .parse().unwrap();
+                  if id > max { id } else { max }
+            });
+
+        FileTodoList {
+            next_id: max_id + 1,
+        }
+    }
+
+    fn save(&mut self, id: usize, task: &Task) -> Result<(), ::std::io::Error> {
+        let mut file = File::create(&format!("{}/{:05}", PATH, id))?;
+        write!(file, "{}\n{:?}", task.name, task.status)
+    }
+
+    fn load(&self, id: usize) -> Result<Task, ::std::io::Error> {
+        let mut file = File::open(&format!("{}/{:05}", PATH, id))?;
+        let content = {
+            let mut content = String::new();
+            try!(file.read_to_string(&mut content));
+            content
+        };
+
+        let lines = content.lines().collect::<Vec<_>>();
+        assert_eq!(2, lines.len());
+        Ok(Task {
+            name: String::from(lines[0]),
+            status: Status::from(lines[1]),
+        })
+    }
+
+    fn ids(&self) -> Result<Vec<usize>, ::std::io::Error> {
+        let mut ids = Vec::new();
+
+        for entry in ::std::fs::read_dir(PATH)? {
+            let name = entry?.file_name();
+            let string = name.into_string().unwrap();
+            let result = string.parse();
+            ids.push(result.unwrap());
+        }
+        Ok(ids)
+    }
+}
+
+impl TodoList for FileTodoList {
+    type Id = usize;
+    type Error = Error;
+
+    fn create(&mut self, name: &str) -> Result<usize, Error> {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        let new_task = Task {
+            status: Status::Open,
+            name: String::from(name),
+        };
+
+        try!(self.save(id, &new_task));
+        Ok(id)
+    }
+
+    fn update<F, R>(&mut self, id: Self::Id, f: F) -> Result<R, Error>
+        where F: FnOnce(&mut Task) -> R
+    {
+        let mut task = self.load(id)?;
+        let result = f(&mut task);
+        try!(self.save(id, &task));
+        Ok(result)
+    }
+
+    fn each<F>(&self, mut f: F)
+        where F: FnMut(&Task)
+    {
+        for &id in self.ids().unwrap().iter() {
+            let task = self.load(id).unwrap();
+            f(&task);
+        }
+    }
+
+    fn enumerate<F>(&self, mut f: F)
+        where F: FnMut(usize, &Task)
+    {
+        for &id in self.ids().unwrap().iter() {
+            let task = self.load(id).unwrap();
+            f(id, &task);
+        }
+    }
+
+    fn next_id(&self, id: Self::Id) -> Result<Self::Id, Error> {
+        if id < self.next_id - 1 {
+            Ok(id + 1)
+        } else {
+            Err(Error::NoSuchTask)
+        }
+    }
+
+    fn next_back_id(&self, id: Self::Id) -> Result<Self::Id, Error> {
+        if id > 1 {
+            Ok(id - 1)
+        } else {
+            Err(Error::NoSuchTask)
+        }
     }
 }
 
