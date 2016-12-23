@@ -13,21 +13,6 @@ const PATH: &'static str = "./.ado/";
 
 fn main() {
     let mut todo_list = FileTodoList::new();
-    // todo_list.create_finished("Start making ado").unwrap();
-    // todo_list.create_finished("Try rusqlite").unwrap();
-    // todo_list.create_closed("Implement a onion architecture").unwrap();
-    // todo_list.create_finished("Start simplified rewrite of ado").unwrap();
-    // todo_list.create("Refine the design of ado").unwrap();
-    // todo_list.create_finished("Make ado interactive").unwrap();
-    // todo_list.create_finished("Implement new task creation").unwrap();
-    // todo_list.create("Implement persistence").unwrap();
-    // todo_list.create_finished("Have ado use unbuffered input").unwrap();
-    // todo_list.create_finished("Eliminate the stdout history").unwrap();
-    // todo_list.create_finished("Implement task status toggling (done/open)").unwrap();
-    // todo_list.create_finished("Implement task status toggling (open/closed)").unwrap();
-    // todo_list.create_finished("Hide the cursor").unwrap();
-    // todo_list.create("Create a help screen").unwrap();
-    // todo_list.create("Refactor next and next_back to a list of ids").unwrap();
     let mut task_picker = TaskPicker {
         position: todo_list.next_id(0).ok().or(Some(0)).unwrap(),
         tasks: todo_list,
@@ -428,6 +413,7 @@ impl FileTodoList {
             let result = string.parse();
             ids.push(result.unwrap());
         }
+        ids.sort();
         Ok(ids)
     }
 }
