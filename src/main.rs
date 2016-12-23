@@ -125,7 +125,9 @@ impl<T> TaskPicker<T>
     }
 
     fn create(&mut self, name: String) -> Result<T::Id, T::Error> {
-        self.tasks.create(&name)
+        let id = self.tasks.create(&name)?;
+        self.position = <_>::from(id);
+        Ok(id)
     }
 }
 
