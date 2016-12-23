@@ -12,9 +12,9 @@ use vec_map::VecMap;
 const PATH: &'static str = "./.ado/";
 
 fn main() {
-    let mut todo_list = FileTodoList::new();
+    let mut todo_list = FileTodoList::new().unwrap();
     let mut task_picker = TaskPicker {
-        position: todo_list.next_id(0).ok().or(Some(0)).unwrap(),
+        position: 0,
         tasks: todo_list,
     };
 
@@ -22,7 +22,7 @@ fn main() {
 }
 
 fn gui<T>(task_picker: &mut TaskPicker<T>) -> Result<(), Error>
-    where T: TodoList<Id = usize>,
+    where T: TodoList<Id = usize, Error = Error>,
 {
     use std::error::Error;
 
@@ -59,6 +59,14 @@ fn gui<T>(task_picker: &mut TaskPicker<T>) -> Result<(), Error>
                         task_picker.create(name).map(|_| ())
                     }
 
+                    'G' => task_picker.bottom(),
+                    'g' => {
+                        match char::from(::ncurses::getch() as u8) {
+                            'g' => task_picker.top(),
+                            _ => continue,
+                        }
+                    },
+
                     _ => continue,
                 }
             }
@@ -90,54 +98,94 @@ struct TaskPicker<T> {
 
 impl<T> TaskPicker<T>
     where T: TodoList,
-          T::Id: Copy + From<usize>,
+          T::Id: PartialEq + Copy + From<usize>,
           usize: From<T::Id>,
-          T::Id: From<usize>,
+          T::Error: From<Error>,
 {
-    fn down(&mut self) -> Result<(), T::Error> {
-        let id = T::Id::from(self.position);
-        self.position = match self.tasks.next_id(id) {
-            Err(_) => self.position,
-            Ok(i) => usize::from(i),
-        };
+    fn top(&mut self) -> Result<(), T::Error> {
+        self.position = 0;
         Ok(())
     }
 
+    fn bottom(&mut self) -> Result<(), T::Error> {
+        let len = self.len()?;
+        if len == 0 {
+            Err(Error::NoSuchTask)?
+        } else {
+            self.position = len - 1;
+            Ok(())
+        }
+    }
+
+    fn down(&mut self) -> Result<(), T::Error> {
+        let len = self.len()?;
+        if len != 0 && len - 1 != self.position {
+            self.position += 1;
+        }
+        Ok(())
+    }
+
+    fn len(&self) -> Result<usize, T::Error> {
+        Ok(self.tasks.ids().collect::<Vec<_>>().len())
+    }
+
     fn up(&mut self) -> Result<(), T::Error> {
-        let id = T::Id::from(self.position);
-        self.position = match self.tasks.next_back_id(id) {
-            Err(_) => self.position,
-            Ok(i) => usize::from(i),
-        };
+        let len = self.len()?;
+        if self.position != 0 {
+            self.position -= 1;
+        }
         Ok(())
     }
 
     fn right(&mut self) -> Result<(), T::Error> {
-        let id = T::Id::from(self.position);
-        let _ = self.tasks.update(id, Task::goto_next_status);
-        Ok(())
+        match self.tasks.ids().nth(self.position) {
+            None => Err(Error::NoSuchTask)?,
+            Some(id) => {
+                let _ = self.tasks.update(id?, Task::goto_next_status);
+                Ok(())
+            },
+        }
     }
 
     fn left(&mut self) -> Result<(), T::Error> {
-        let id = T::Id::from(self.position);
-        let _ = self.tasks.update(id, Task::goto_next_back_status);
-        Ok(())
+        match self.tasks.ids().nth(self.position) {
+            None => Err(Error::NoSuchTask)?,
+            Some(id) => {
+                let _ = self.tasks.update(id?, Task::goto_next_back_status);
+                Ok(())
+            },
+        }
     }
 
     fn create(&mut self, name: String) -> Result<T::Id, T::Error> {
-        let id = self.tasks.create(&name)?;
-        self.position = <_>::from(id);
-        Ok(id)
+        let new_id = self.tasks.create(&name)?;
+        let mut new_position = self.position;
+        for (p, id) in self.tasks.ids().enumerate() {
+            match id {
+                Ok(id) if id == new_id => new_position = p,
+                _ => (),
+            };
+        }
+        self.position = new_position;
+        Ok(new_id)
     }
 }
 
-impl<T> Display for TaskPicker<T>
-    where T: TodoList
+impl<T, I> Display for TaskPicker<T>
+    where T: TodoList<Id = I>,
+          I: Copy + From<usize> + PartialEq + Display,
 {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let mut strings = Vec::new();
+        let current_id = self.tasks.ids().nth(self.position)
+            .unwrap_or(Ok(<_>::from(0)))
+            .unwrap_or(<_>::from(0));
         self.tasks.enumerate(|id, task| {
-            let marker = if id == self.position { ">" } else { " " };
+            let marker = if id == current_id {
+                ">"
+            } else {
+                " "
+            };
             strings.push(format!("{} {}", marker, task));
         });
         write!(f, "  Wont Open Done\n{}", strings.join("\n"))
@@ -146,14 +194,12 @@ impl<T> Display for TaskPicker<T>
 
 struct FakeTodoList {
     tasks: VecMap<Task>,
-    next_id: usize,
 }
 
 impl FakeTodoList {
     fn new() -> FakeTodoList {
         FakeTodoList {
             tasks: VecMap::new(),
-            next_id: 0,
         }
     }
 }
@@ -216,7 +262,6 @@ impl std::error::Error for Error {
 }
 
 impl From<::std::io::Error> for Error {
-
     fn from(cause: ::std::io::Error) -> Error {
         Error::Io(cause)
     }
@@ -233,10 +278,9 @@ trait TodoList {
     fn update<F, R>(&mut self, id: Self::Id, f: F) -> Result<R, Self::Error>
         where F: FnOnce(&mut Task) -> R;
 
-    fn enumerate<F>(&self, f: F) where F: FnMut(usize, &Task);
+    fn enumerate<F>(&self, f: F) where F: FnMut(Self::Id, &Task);
 
-    fn next_id(&self, id: Self::Id) -> Result<Self::Id, Self::Error>;
-    fn next_back_id(&self, id: Self::Id) -> Result<Self::Id, Self::Error>;
+    fn ids(&self) -> Box<Iterator<Item = Result<Self::Id, Self::Error>>>;
 
     fn create_finished(&mut self, name: &str) -> Result<Self::Id, Self::Error>
         where Self::Error: From<Error>
@@ -309,8 +353,7 @@ impl TodoList for FakeTodoList {
     type Error = Error;
 
     fn create(&mut self, name: &str) -> Result<usize, Error> {
-        let id = self.next_id;
-        self.next_id += 1;
+        let id = self.tasks.len();
 
         let new_task = Task {
             status: Status::Open,
@@ -336,27 +379,15 @@ impl TodoList for FakeTodoList {
     }
 
     fn enumerate<F>(&self, mut f: F)
-        where F: FnMut(usize, &Task)
+        where F: FnMut(Self::Id, &Task)
     {
         for (id, task) in self.tasks.iter() {
             f(id, task);
         }
     }
 
-    fn next_id(&self, id: Self::Id) -> Result<Self::Id, Error> {
-        if id < self.next_id - 1 {
-            Ok(id + 1)
-        } else {
-            Err(Error::NoSuchTask)
-        }
-    }
-
-    fn next_back_id(&self, id: Self::Id) -> Result<Self::Id, Error> {
-        if id > 0 {
-            Ok(id - 1)
-        } else {
-            Err(Error::NoSuchTask)
-        }
+    fn ids(&self) -> Box<Iterator<Item = Result<Self::Id, Error>>> {
+        return Box::new((0..self.tasks.len()).map(|x| Ok(x)))
     }
 }
 
@@ -366,23 +397,14 @@ struct FileTodoList {
 }
 
 impl FileTodoList {
-    fn new() -> FileTodoList {
+    fn new() -> Result<FileTodoList, Error> {
         ::std::fs::DirBuilder::new()
             .recursive(true)
             .create(PATH).unwrap();
 
-        let max_id = ::std::fs::read_dir(PATH).unwrap()
-            .fold(0, |max, entry| {
-                  let id = entry.unwrap()
-                      .file_name()
-                      .into_string().unwrap()
-                      .parse().unwrap();
-                  if id > max { id } else { max }
-            });
-
-        FileTodoList {
-            next_id: max_id + 1,
-        }
+        Ok(FileTodoList {
+            next_id: ids()?.max().unwrap_or(0) + 1,
+        })
     }
 
     fn save(&mut self, id: usize, task: &Task) -> Result<(), ::std::io::Error> {
@@ -404,19 +426,6 @@ impl FileTodoList {
             name: String::from(lines[0]),
             status: Status::from(lines[1]),
         })
-    }
-
-    fn ids(&self) -> Result<Vec<usize>, ::std::io::Error> {
-        let mut ids = Vec::new();
-
-        for entry in ::std::fs::read_dir(PATH)? {
-            let name = entry?.file_name();
-            let string = name.into_string().unwrap();
-            let result = string.parse();
-            ids.push(result.unwrap());
-        }
-        ids.sort();
-        Ok(ids)
     }
 }
 
@@ -449,36 +458,39 @@ impl TodoList for FileTodoList {
     fn each<F>(&self, mut f: F)
         where F: FnMut(&Task)
     {
-        for &id in self.ids().unwrap().iter() {
+        for id in ids().unwrap() {
             let task = self.load(id).unwrap();
             f(&task);
         }
     }
 
     fn enumerate<F>(&self, mut f: F)
-        where F: FnMut(usize, &Task)
+        where F: FnMut(Self::Id, &Task)
     {
-        for &id in self.ids().unwrap().iter() {
+        for id in ids().unwrap() {
             let task = self.load(id).unwrap();
             f(id, &task);
         }
     }
 
-    fn next_id(&self, id: Self::Id) -> Result<Self::Id, Error> {
-        if id < self.next_id - 1 {
-            Ok(id + 1)
-        } else {
-            Err(Error::NoSuchTask)
+    fn ids(&self) -> Box<Iterator<Item = Result<Self::Id, Error>>> {
+        match ids() {
+            Ok(ids) => Box::new(ids.map(|x| Ok(x))),
+            Err(err) => Box::new(vec![Err(<_>::from(err))].into_iter()),
         }
     }
+}
 
-    fn next_back_id(&self, id: Self::Id) -> Result<Self::Id, Error> {
-        if id > 1 {
-            Ok(id - 1)
-        } else {
-            Err(Error::NoSuchTask)
-        }
-    }
+fn ids() -> Result<Box<Iterator<Item = usize>>, ::std::io::Error> {
+    let mut ids = ::std::fs::read_dir(PATH)?
+        .map(|entry|
+             entry.unwrap()
+             .file_name()
+             .into_string().unwrap()
+             .parse().unwrap())
+        .collect::<Vec<_>>();
+    ids.sort();
+    Ok(Box::new(ids.into_iter()))
 }
 
 impl Display for FakeTodoList {
