@@ -6,6 +6,7 @@ use std::fmt::{Display, Formatter};
 
 use std::io::prelude::*;
 use std::fs::File;
+use std::fs;
 
 use vec_map::VecMap;
 
@@ -60,11 +61,15 @@ fn gui<T>(task_picker: &mut TaskPicker<T>) -> Result<(), Error>
                     }
 
                     'G' => task_picker.bottom(),
-                    'g' => {
-                        match char::from(::ncurses::getch() as u8) {
-                            'g' => task_picker.top(),
-                            _ => continue,
-                        }
+                    'g' => match char::from(::ncurses::getch() as u8) {
+                        'g' => task_picker.top(),
+                        _ => continue,
+                    },
+
+                    'D' => task_picker.remove(),
+                    'd' => match char::from(::ncurses::getch() as u8) {
+                        'd' => task_picker.remove(),
+                        _ => continue,
                     },
 
                     _ => continue,
@@ -168,6 +173,21 @@ impl<T> TaskPicker<T>
         }
         self.position = new_position;
         Ok(new_id)
+    }
+
+    fn remove(&mut self) -> Result<(), T::Error> {
+        let id = self.tasks.ids().nth(self.position)
+            .unwrap_or(Err(<_>::from(Error::NoSuchTask)))?;
+
+        // Make sure we will still have our cursor in a valid position.
+        let new_len = self.len()? - 1;
+        if self.position >= new_len && new_len > 0 {
+            self.position = new_len - 1;
+        }
+
+        try!(self.tasks.remove(id));
+
+        Ok(())
     }
 }
 
@@ -282,21 +302,7 @@ trait TodoList {
 
     fn ids(&self) -> Box<Iterator<Item = Result<Self::Id, Self::Error>>>;
 
-    fn create_finished(&mut self, name: &str) -> Result<Self::Id, Self::Error>
-        where Self::Error: From<Error>
-    {
-        let id = self.create(name)?;
-        try!(self.update(id, Task::finish));
-        Ok(id)
-    }
-
-    fn create_closed(&mut self, name: &str) -> Result<Self::Id, Self::Error>
-        where Self::Error: From<Error>
-    {
-        let id = self.create(name)?;
-        try!(self.update(id, Task::close));
-        Ok(id)
-    }
+    fn remove(&mut self, id: Self::Id) -> Result<Task, Self::Error>;
 }
 
 impl Task {
@@ -387,7 +393,13 @@ impl TodoList for FakeTodoList {
     }
 
     fn ids(&self) -> Box<Iterator<Item = Result<Self::Id, Error>>> {
-        return Box::new((0..self.tasks.len()).map(|x| Ok(x)))
+        Box::new((0..self.tasks.len()).map(|x| Ok(x)))
+    }
+
+    fn remove(&mut self, id: Self::Id) -> Result<Task, Self::Error> {
+        self.tasks
+            .remove(id)
+            .map_or(Err(Error::NoSuchTask), |task| Ok(task))
     }
 }
 
@@ -478,6 +490,15 @@ impl TodoList for FileTodoList {
             Ok(ids) => Box::new(ids.map(|x| Ok(x))),
             Err(err) => Box::new(vec![Err(<_>::from(err))].into_iter()),
         }
+    }
+
+    fn remove(&mut self, id: Self::Id) -> Result<Task, Self::Error> {
+        // Load the task first so it can be moved out.
+        let task = self.load(id)?;
+
+        fs::remove_file(&format!("{}/{:05}", PATH, id))?;
+
+        Ok(task)
     }
 }
 
