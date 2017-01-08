@@ -17,7 +17,7 @@ const PATH: &'static str = "./.ado/";
 
 /// Constructs the application and runs the GUI.
 fn main() {
-    let todo_list = FileTodoList::new().unwrap();
+    let todo_list = FakeTodoList::new();
     let mut task_picker = TaskPicker {
         position: 0,
         tasks: todo_list,
@@ -165,22 +165,21 @@ impl<T> TaskPicker<T>
     }
 
     fn right(&mut self) -> Result<(), T::Error> {
-        match self.tasks.ids().nth(self.position) {
-            None => Err(Error::NoSuchTask)?,
-            Some(id) => {
-                let _ = self.tasks.update(id?, Task::goto_next_status);
-                Ok(())
-            }
-        }
+        let id = self.nth_id(self.position)?;
+        Ok(try!(self.tasks.find_mut(id)?
+            .goto_next_status()))
     }
 
     fn left(&mut self) -> Result<(), T::Error> {
+        let id = self.nth_id(self.position)?;
+        Ok(try!(self.tasks.find_mut(id)?
+            .goto_next_back_status()))
+    }
+
+    fn nth_id(&self, n: usize) -> Result<T::Id, T::Error> {
         match self.tasks.ids().nth(self.position) {
             None => Err(Error::NoSuchTask)?,
-            Some(id) => {
-                let _ = self.tasks.update(id?, Task::goto_next_back_status);
-                Ok(())
-            }
+            Some(id) => Ok(id?),
         }
     }
 
@@ -226,10 +225,11 @@ impl<T, I> Display for TaskPicker<T>
             .nth(self.position)
             .unwrap_or(Ok(<_>::from(0)))
             .unwrap_or(<_>::from(0));
-        self.tasks.enumerate(|id, task| {
+        // TODO report errors instead of flat_mapping.
+        for (id, task) in self.tasks.enumerate().flat_map(Result::ok) {
             let marker = if id == current_id { ">" } else { " " };
             strings.push(format!("{} {}", marker, task));
-        });
+        }
         write!(f, "  Wont Open Done\n{}", strings.join("\n"))
     }
 }
@@ -277,7 +277,7 @@ impl Display for Status {
 }
 
 #[derive(Debug)]
-enum Error {
+pub enum Error {
     AlreadyDone,
     AlreadyWont,
     Io(::std::io::Error),
@@ -315,15 +315,15 @@ trait TodoList {
 
     fn create(&mut self, name: &str) -> Result<Self::Id, Self::Error>;
 
-    fn each<F>(&self, f: F) where F: FnMut(&Task);
+    fn iter<'a>(&'a self) -> Box<Iterator<Item = Result<&'a Task, Self::Error>> + 'a>;
+    fn iter_mut<'a>(&'a mut self) -> Box<Iterator<Item = Result<&'a mut Task, Self::Error>> + 'a>;
+    fn into_iter(self) -> Box<Iterator<Item = Result<Task, Self::Error>>>;
 
-    fn update<F, R>(&mut self, id: Self::Id, f: F) -> Result<R, Self::Error>
-        where F: FnOnce(&mut Task) -> R;
+    fn enumerate<'a>(&'a self) -> Box<Iterator<Item = Result<(Self::Id, &'a Task), Self::Error>> + 'a>;
+    fn ids<'a>(&'a self) -> Box<Iterator<Item = Result<Self::Id, Self::Error>> + 'a>;
 
-    fn enumerate<F>(&self, f: F) where F: FnMut(Self::Id, &Task);
-
-    fn ids(&self) -> Box<Iterator<Item = Result<Self::Id, Self::Error>>>;
-
+    fn find<'a>(&'a self, id: Self::Id) -> Result<&'a Task, Self::Error>;
+    fn find_mut<'a>(&'a mut self, id: Self::Id) -> Result<&'a mut Task, Self::Error>;
     fn remove(&mut self, id: Self::Id) -> Result<Task, Self::Error>;
 }
 
@@ -370,30 +370,14 @@ impl TodoList for FakeTodoList {
         Ok(id)
     }
 
-    fn update<F, R>(&mut self, id: Self::Id, f: F) -> Result<R, Error>
-        where F: FnOnce(&mut Task) -> R
-    {
-        Ok(f(&mut self.tasks[id]))
+    fn enumerate<'a>(&'a self) -> Box<Iterator<Item = Result<(Self::Id, &'a Task), Self::Error>> + 'a> {
+        Box::new(self.tasks.iter()
+                 .map(|pair| Ok(pair)))
     }
 
-    fn each<F>(&self, mut f: F)
-        where F: FnMut(&Task)
-    {
-        for (_, task) in self.tasks.iter() {
-            f(task);
-        }
-    }
-
-    fn enumerate<F>(&self, mut f: F)
-        where F: FnMut(Self::Id, &Task)
-    {
-        for (id, task) in self.tasks.iter() {
-            f(id, task);
-        }
-    }
-
-    fn ids(&self) -> Box<Iterator<Item = Result<Self::Id, Error>>> {
-        Box::new((0..self.tasks.len()).map(|x| Ok(x)))
+    fn ids<'a>(&'a self) -> Box<Iterator<Item = Result<Self::Id, Self::Error>> + 'a> {
+        Box::new(self.tasks.keys()
+                 .map(|key| Ok(key)))
     }
 
     fn remove(&mut self, id: Self::Id) -> Result<Task, Self::Error> {
@@ -401,14 +385,40 @@ impl TodoList for FakeTodoList {
             .remove(id)
             .map_or(Err(Error::NoSuchTask), |task| Ok(task))
     }
+
+    fn find<'a>(&'a self, id: Self::Id) -> Result<&'a Task, Self::Error> {
+        Ok(&self.tasks[id])
+    }
+
+    fn find_mut<'a>(&'a mut self, id: Self::Id) -> Result<&'a mut Task, Self::Error> {
+        Ok(&mut self.tasks[id])
+    }
+
+    fn iter<'a>(&'a self) -> Box<Iterator<Item = Result<&'a Task, Self::Error>> + 'a> {
+        let iter = self.tasks.iter()
+            .map(|(_, task)| Ok(task));
+        Box::new(iter)
+    }
+
+    fn iter_mut<'a>(&'a mut self) -> Box<Iterator<Item = Result<&'a mut Task, Self::Error>> + 'a> {
+        let iter = self.tasks.iter_mut()
+            .map(|(_, task)| Ok(task));
+        Box::new(iter)
+    }
+
+    fn into_iter(self) -> Box<Iterator<Item = Result<Task, Self::Error>>> {
+        let iter = self.tasks.into_iter()
+            .map(|(_, task)| Ok(task));
+        Box::new(iter)
+    }
 }
 
-struct FileTodoList {
+pub struct FileTodoList {
     next_id: usize,
 }
 
 impl FileTodoList {
-    fn new() -> Result<FileTodoList, Error> {
+    pub fn new() -> Result<FileTodoList, Error> {
         ::std::fs::DirBuilder::new()
             .recursive(true)
             .create(PATH)
@@ -439,66 +449,47 @@ impl FileTodoList {
     }
 }
 
-impl TodoList for FileTodoList {
-    type Id = usize;
-    type Error = Error;
-
-    fn create(&mut self, name: &str) -> Result<usize, Error> {
-        let id = self.next_id;
-        self.next_id += 1;
-
-        let new_task = Task {
-            status: Status::Open,
-            name: String::from(name),
-        };
-
-        try!(self.save(id, &new_task));
-        Ok(id)
-    }
-
-    fn update<F, R>(&mut self, id: Self::Id, f: F) -> Result<R, Error>
-        where F: FnOnce(&mut Task) -> R
-    {
-        let mut task = self.load(id)?;
-        let result = f(&mut task);
-        try!(self.save(id, &task));
-        Ok(result)
-    }
-
-    fn each<F>(&self, mut f: F)
-        where F: FnMut(&Task)
-    {
-        for id in ids().unwrap() {
-            let task = self.load(id).unwrap();
-            f(&task);
-        }
-    }
-
-    fn enumerate<F>(&self, mut f: F)
-        where F: FnMut(Self::Id, &Task)
-    {
-        for id in ids().unwrap() {
-            let task = self.load(id).unwrap();
-            f(id, &task);
-        }
-    }
-
-    fn ids(&self) -> Box<Iterator<Item = Result<Self::Id, Error>>> {
-        match ids() {
-            Ok(ids) => Box::new(ids.map(|x| Ok(x))),
-            Err(err) => Box::new(vec![Err(<_>::from(err))].into_iter()),
-        }
-    }
-
-    fn remove(&mut self, id: Self::Id) -> Result<Task, Self::Error> {
-        // Load the task first so it can be moved out.
-        let task = self.load(id)?;
-
-        fs::remove_file(&format!("{}/{:05}", PATH, id))?;
-
-        Ok(task)
-    }
-}
+// impl TodoList for FileTodoList {
+//     type Id = usize;
+//     type Error = Error;
+//
+//     fn create(&mut self, name: &str) -> Result<usize, Error> {
+//         let id = self.next_id;
+//         self.next_id += 1;
+//
+//         let new_task = Task {
+//             status: Status::Open,
+//             name: String::from(name),
+//         };
+//
+//         try!(self.save(id, &new_task));
+//         Ok(id)
+//     }
+//
+//     fn enumerate(&self) -> Box<Iterator<Item = Result<(Self::Id, &Task), Self::Error>>>
+//     {
+//         match ids() {
+//             Ok(ids) => Box::new(ids.unwrap().map(|id| (id, self.load(id)))),
+//             Err(err) => Box::new(vec![Err(<_>::from(err))].into_iter()),
+//         }
+//     }
+//
+//     fn ids(&self) -> Box<Iterator<Item = Result<Self::Id, Error>>> {
+//         match ids() {
+//             Ok(ids) => Box::new(ids.map(|x| Ok(x))),
+//             Err(err) => Box::new(vec![Err(<_>::from(err))].into_iter()),
+//         }
+//     }
+//
+//     fn remove(&mut self, id: Self::Id) -> Result<Task, Self::Error> {
+//         // Load the task first so it can be moved out.
+//         let task = self.load(id)?;
+//
+//         fs::remove_file(&format!("{}/{:05}", PATH, id))?;
+//
+//         Ok(task)
+//     }
+// }
 
 fn ids() -> Result<Box<Iterator<Item = usize>>, ::std::io::Error> {
     let read_dir = ::std::fs::read_dir(PATH)?;
