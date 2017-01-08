@@ -5,8 +5,9 @@ use std::fmt;
 use std::fmt::{Display, Formatter};
 
 use std::io::prelude::*;
-use std::fs::File;
+use std::fs::{DirEntry, File};
 use std::fs;
+use std::ffi::OsString;
 
 use vec_map::VecMap;
 
@@ -503,12 +504,19 @@ impl TodoList for FileTodoList {
 }
 
 fn ids() -> Result<Box<Iterator<Item = usize>>, ::std::io::Error> {
-    let mut ids = ::std::fs::read_dir(PATH)?
-        .map(|entry|
-             entry.unwrap()
-             .file_name()
-             .into_string().unwrap()
-             .parse().unwrap())
+    let read_dir = ::std::fs::read_dir(PATH)?;
+
+    // FIXME: ADO-01 report errors in some way.
+    let mut ids = read_dir
+        // Convert each result to entry
+        .flat_map(Result::ok)
+        // Convert each entry to filename; use autoref.
+        .map(|entry| entry.file_name())
+        // Convert each filename to string
+        .flat_map(OsString::into_string)
+        // Parse id; use autoref.
+        .flat_map(|name| name.parse())
+
         .collect::<Vec<_>>();
     ids.sort();
     Ok(Box::new(ids.into_iter()))
