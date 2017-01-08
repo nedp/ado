@@ -1,6 +1,8 @@
 extern crate ncurses;
 extern crate vec_map;
 
+use ncurses::CURSOR_VISIBILITY;
+
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
@@ -29,15 +31,20 @@ fn gui<T>(task_picker: &mut TaskPicker<T>) -> Result<(), Error>
     use std::error::Error;
 
     ::ncurses::initscr();
-    ::ncurses::noecho();
-    ::ncurses::curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_INVISIBLE);
+    ::ncurses::curs_set(CURSOR_VISIBILITY::CURSOR_INVISIBLE);
     ::ncurses::noraw();
     ::ncurses::cbreak();
 
-    ::ncurses::printw(&format!("{}", task_picker));
-    ::ncurses::refresh();
+    let mut error: Option<self::Error> = None;
 
     loop {
+        ::ncurses::clear();
+        ::ncurses::printw(&format!("{}\n", task_picker));
+        if let Some(err) = error {
+            ::ncurses::printw(&format!("{}\n", err.description()));
+        }
+        ::ncurses::refresh();
+
         let result = match ::ncurses::getch() {
             x => {
                 match char::from(x as u8) {
@@ -50,13 +57,11 @@ fn gui<T>(task_picker: &mut TaskPicker<T>) -> Result<(), Error>
 
                     'o' => {
                         ::ncurses::printw("\nEnter a task summary:\n");
-                        ::ncurses::echo();
-                        ::ncurses::curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_VISIBLE);
+                        ::ncurses::curs_set(CURSOR_VISIBILITY::CURSOR_VISIBLE);
                         ::ncurses::nocbreak();
                         let mut name = String::new();
                         ::ncurses::getstr(&mut name);
-                        ::ncurses::noecho();
-                        ::ncurses::curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_INVISIBLE);
+                        ::ncurses::curs_set(CURSOR_VISIBILITY::CURSOR_INVISIBLE);
                         ::ncurses::cbreak();
                         task_picker.create(name).map(|_| ())
                     }
@@ -65,7 +70,7 @@ fn gui<T>(task_picker: &mut TaskPicker<T>) -> Result<(), Error>
                     'g' => {
                         match char::from(::ncurses::getch() as u8) {
                             'g' => task_picker.top(),
-                            _ => continue,
+                            _ => Err(self::Error::NoSuchCommand),
                         }
                     }
 
@@ -73,28 +78,16 @@ fn gui<T>(task_picker: &mut TaskPicker<T>) -> Result<(), Error>
                     'd' => {
                         match char::from(::ncurses::getch() as u8) {
                             'd' => task_picker.remove(),
-                            _ => continue,
+                            _ => Err(self::Error::NoSuchCommand),
                         }
                     }
 
-                    _ => continue,
+                    _ => Err(self::Error::NoSuchCommand),
                 }
             }
         };
 
-        match result {
-            Err(error) => {
-                ::ncurses::clear();
-                ::ncurses::printw(error.description());
-                ::ncurses::refresh();
-                ::ncurses::getch();
-            }
-            _ => {}
-        };
-
-        ::ncurses::clear();
-        ::ncurses::printw(&format!("{}", task_picker));
-        ::ncurses::refresh();
+        error = result.err();
     }
 
     ::ncurses::endwin();
@@ -264,6 +257,7 @@ enum Error {
     AlreadyWont,
     Io(::std::io::Error),
     NoSuchTask,
+    NoSuchCommand,
 }
 
 impl Display for Error {
@@ -279,6 +273,7 @@ impl std::error::Error for Error {
             Error::AlreadyWont => "The task has already been closed",
             Error::Io(_) => "An IO error occured",
             Error::NoSuchTask => "No such task could be found",
+            Error::NoSuchCommand => "Unrecognised command",
         }
     }
 }
