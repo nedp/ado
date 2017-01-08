@@ -5,7 +5,7 @@ use std::fmt;
 use std::fmt::{Display, Formatter};
 
 use std::io::prelude::*;
-use std::fs::{DirEntry, File};
+use std::fs::File;
 use std::fs;
 use std::ffi::OsString;
 
@@ -14,7 +14,7 @@ use vec_map::VecMap;
 const PATH: &'static str = "./.ado/";
 
 fn main() {
-    let mut todo_list = FileTodoList::new().unwrap();
+    let todo_list = FileTodoList::new().unwrap();
     let mut task_picker = TaskPicker {
         position: 0,
         tasks: todo_list,
@@ -140,7 +140,6 @@ impl<T> TaskPicker<T>
     }
 
     fn up(&mut self) -> Result<(), T::Error> {
-        let len = self.len()?;
         if self.position != 0 {
             self.position -= 1;
         }
@@ -217,12 +216,12 @@ impl<T, I> Display for TaskPicker<T>
     }
 }
 
-struct FakeTodoList {
+pub struct FakeTodoList {
     tasks: VecMap<Task>,
 }
 
 impl FakeTodoList {
-    fn new() -> FakeTodoList {
+    pub fn new() -> FakeTodoList {
         FakeTodoList { tasks: VecMap::new() }
     }
 }
@@ -325,28 +324,6 @@ impl Task {
             Status::Wont => return Err(Error::AlreadyWont),
         };
         Ok(())
-    }
-
-    fn finish(&mut self) -> Result<(), Error> {
-        match self.status {
-            Status::Done => Err(Error::AlreadyDone),
-            Status::Wont => Err(Error::AlreadyWont),
-            _ => {
-                self.status = Status::Done;
-                Ok(())
-            }
-        }
-    }
-
-    fn close(&mut self) -> Result<(), Error> {
-        match self.status {
-            Status::Done => Err(Error::AlreadyDone),
-            Status::Wont => Err(Error::AlreadyWont),
-            _ => {
-                self.status = Status::Wont;
-                Ok(())
-            }
-        }
     }
 }
 
