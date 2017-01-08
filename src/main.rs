@@ -23,7 +23,7 @@ fn main() {
 }
 
 fn gui<T>(task_picker: &mut TaskPicker<T>) -> Result<(), Error>
-    where T: TodoList<Id = usize, Error = Error>,
+    where T: TodoList<Id = usize, Error = Error>
 {
     use std::error::Error;
 
@@ -61,16 +61,20 @@ fn gui<T>(task_picker: &mut TaskPicker<T>) -> Result<(), Error>
                     }
 
                     'G' => task_picker.bottom(),
-                    'g' => match char::from(::ncurses::getch() as u8) {
-                        'g' => task_picker.top(),
-                        _ => continue,
-                    },
+                    'g' => {
+                        match char::from(::ncurses::getch() as u8) {
+                            'g' => task_picker.top(),
+                            _ => continue,
+                        }
+                    }
 
                     'D' => task_picker.remove(),
-                    'd' => match char::from(::ncurses::getch() as u8) {
-                        'd' => task_picker.remove(),
-                        _ => continue,
-                    },
+                    'd' => {
+                        match char::from(::ncurses::getch() as u8) {
+                            'd' => task_picker.remove(),
+                            _ => continue,
+                        }
+                    }
 
                     _ => continue,
                 }
@@ -105,7 +109,7 @@ impl<T> TaskPicker<T>
     where T: TodoList,
           T::Id: PartialEq + Copy + From<usize>,
           usize: From<T::Id>,
-          T::Error: From<Error>,
+          T::Error: From<Error>
 {
     fn top(&mut self) -> Result<(), T::Error> {
         self.position = 0;
@@ -148,7 +152,7 @@ impl<T> TaskPicker<T>
             Some(id) => {
                 let _ = self.tasks.update(id?, Task::goto_next_status);
                 Ok(())
-            },
+            }
         }
     }
 
@@ -158,7 +162,7 @@ impl<T> TaskPicker<T>
             Some(id) => {
                 let _ = self.tasks.update(id?, Task::goto_next_back_status);
                 Ok(())
-            },
+            }
         }
     }
 
@@ -176,7 +180,9 @@ impl<T> TaskPicker<T>
     }
 
     fn remove(&mut self) -> Result<(), T::Error> {
-        let id = self.tasks.ids().nth(self.position)
+        let id = self.tasks
+            .ids()
+            .nth(self.position)
             .unwrap_or(Err(<_>::from(Error::NoSuchTask)))?;
 
         // Make sure we will still have our cursor in a valid position.
@@ -193,19 +199,17 @@ impl<T> TaskPicker<T>
 
 impl<T, I> Display for TaskPicker<T>
     where T: TodoList<Id = I>,
-          I: Copy + From<usize> + PartialEq + Display,
+          I: Copy + From<usize> + PartialEq + Display
 {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let mut strings = Vec::new();
-        let current_id = self.tasks.ids().nth(self.position)
+        let current_id = self.tasks
+            .ids()
+            .nth(self.position)
             .unwrap_or(Ok(<_>::from(0)))
             .unwrap_or(<_>::from(0));
         self.tasks.enumerate(|id, task| {
-            let marker = if id == current_id {
-                ">"
-            } else {
-                " "
-            };
+            let marker = if id == current_id { ">" } else { " " };
             strings.push(format!("{} {}", marker, task));
         });
         write!(f, "  Wont Open Done\n{}", strings.join("\n"))
@@ -218,9 +222,7 @@ struct FakeTodoList {
 
 impl FakeTodoList {
     fn new() -> FakeTodoList {
-        FakeTodoList {
-            tasks: VecMap::new(),
-        }
+        FakeTodoList { tasks: VecMap::new() }
     }
 }
 struct Task {
@@ -235,7 +237,7 @@ enum Status {
     Wont,
 }
 
-impl <'a> From<&'a str> for Status {
+impl<'a> From<&'a str> for Status {
     fn from(source: &str) -> Status {
         match source {
             "Open" => Status::Open,
@@ -403,7 +405,6 @@ impl TodoList for FakeTodoList {
     }
 }
 
-
 struct FileTodoList {
     next_id: usize,
 }
@@ -412,11 +413,10 @@ impl FileTodoList {
     fn new() -> Result<FileTodoList, Error> {
         ::std::fs::DirBuilder::new()
             .recursive(true)
-            .create(PATH).unwrap();
+            .create(PATH)
+            .unwrap();
 
-        Ok(FileTodoList {
-            next_id: ids()?.max().unwrap_or(0) + 1,
-        })
+        Ok(FileTodoList { next_id: ids()?.max().unwrap_or(0) + 1 })
     }
 
     fn save(&mut self, id: usize, task: &Task) -> Result<(), ::std::io::Error> {
