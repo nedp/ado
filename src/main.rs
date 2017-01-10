@@ -224,18 +224,13 @@ impl<T> Display for TaskPicker<T>
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let mut strings = Vec::new();
 
-        let current_id = self.tasks
-            .ids()
-            .nth(self.position)
-            .map(|result| result.map_err(|_| fmt::Error))
-            .unwrap_or(Err(fmt::Error))?;
-
         // TODO report errors instead of flat_mapping.
-        for id_task in self.tasks.enumerate() {
-            let (id, task) = id_task.map_err(|_| fmt::Error)?;
-            let marker = if id == current_id { ">" } else { " " };
+        for (position, id_task) in self.tasks.enumerate().enumerate() {
+            let (_, task) = id_task.map_err(|_| fmt::Error)?;
+            let marker = if position == self.position { ">" } else { " " };
             strings.push(format!("{} {}", marker, task.projection()));
         }
+
         write!(f, "  Wont Open Done\n{}", strings.join("\n"))
     }
 }
