@@ -6,6 +6,7 @@ use ncurses::CURSOR_VISIBILITY;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
+use std::cmp;
 use std::collections::HashMap;
 use std::io::prelude::*;
 use std::fs::File;
@@ -42,7 +43,7 @@ fn main() {
 /// of the screen until the command is completed (e.g. as 'dd')
 /// or abandoned.
 fn gui<T>(task_picker: &mut TaskPicker<T>)
-    where T: TodoList<Id = usize, Error = Error>,
+    where T: TodoList<Error = Error>,
           T::Error: From<<T::Task as Task>::Error>
 {
     use ::std::error::Error;
@@ -128,17 +129,15 @@ struct TaskPicker<T> {
 
 impl<T> TaskPicker<T>
     where T: TodoList,
-          T::Id: PartialEq + Copy + From<usize>,
-          usize: From<T::Id>,
-          T::Error: From<Error>,
-          Error: From<T::Error>
+          Error: From<T::Error>,
+          Error: From<<T::Task as Task>::Error>
 {
-    fn top(&mut self) -> Result<(), T::Error> {
+    fn top(&mut self) -> Result<()> {
         self.position = 0;
         Ok(())
     }
 
-    fn bottom(&mut self) -> Result<(), T::Error> {
+    fn bottom(&mut self) -> Result<()> {
         let len = self.len()?;
         if len == 0 {
             Err(Error::NoSuchTask)?
@@ -148,7 +147,7 @@ impl<T> TaskPicker<T>
         }
     }
 
-    fn down(&mut self) -> Result<(), T::Error> {
+    fn down(&mut self) -> Result<()> {
         let len = self.len()?;
         if len != 0 && len - 1 != self.position {
             self.position += 1;
@@ -156,42 +155,42 @@ impl<T> TaskPicker<T>
         Ok(())
     }
 
-    fn len(&self) -> Result<usize, T::Error> {
+    fn len(&self) -> Result<usize> {
         Ok(self.tasks.ids().collect::<Vec<_>>().len())
     }
 
-    fn up(&mut self) -> Result<(), T::Error> {
+    fn up(&mut self) -> Result<()> {
         if self.position != 0 {
             self.position -= 1;
         }
         Ok(())
     }
 
-    fn right(&mut self) -> Result<(), T::Error> {
+    fn right(&mut self) -> Result<()> {
         let id = self.current_id()?;
         self.tasks
             .find_mut(id)?
             .goto_next_status()
-            .map_err(T::Error::from)
+            .map_err(Error::from)
     }
 
-    fn left(&mut self) -> Result<(), T::Error> {
+    fn left(&mut self) -> Result<()> {
         let id = self.current_id()?;
         self.tasks
             .find_mut(id)?
             .goto_next_back_status()
-            .map_err(T::Error::from)
+            .map_err(Error::from)
     }
 
-    fn current_id(&self) -> Result<T::Id, T::Error> {
+    fn current_id(&self) -> Result<usize> {
         self.tasks
             .ids()
             .nth(self.position)
+            .map(|result| result.map_err(Error::from))
             .unwrap_or(Err(Error::NoSuchTask))
-            .map_err(T::Error::from)
     }
 
-    fn create(&mut self, name: String) -> Result<T::Id, T::Error> {
+    fn create(&mut self, name: String) -> Result<usize> {
         let new_id = self.tasks.create(&name)?;
         let mut new_position = self.position;
         for (p, id) in self.tasks.ids().enumerate() {
@@ -204,37 +203,36 @@ impl<T> TaskPicker<T>
         Ok(new_id)
     }
 
-    fn remove(&mut self) -> Result<(), T::Error> {
+    fn remove(&mut self) -> Result<()> {
         let id = self.tasks
             .ids()
             .nth(self.position)
-            .unwrap_or(Err(<_>::from(Error::NoSuchTask)))?;
-
-        // Make sure we will still have our cursor in a valid position.
-        let new_len = self.len()? - 1;
-        if self.position >= new_len && new_len > 0 {
-            self.position = new_len - 1;
-        }
+            .map(|result| result.map_err(Error::from))
+            .unwrap_or(Err(Error::NoSuchTask))?;
 
         try!(self.tasks.remove(id));
 
+        // Make sure we will still have our cursor in a valid position.
+        self.position = cmp::min(self.position, cmp::max(1, self.len()?) - 1);
         Ok(())
     }
 }
 
-impl<T, I> Display for TaskPicker<T>
-    where T: TodoList<Id = I>,
-          I: Copy + From<usize> + PartialEq + Display
+impl<T> Display for TaskPicker<T>
+    where T: TodoList
 {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let mut strings = Vec::new();
+
         let current_id = self.tasks
             .ids()
             .nth(self.position)
-            .unwrap_or(Ok(<_>::from(0)))
-            .unwrap_or(<_>::from(0));
+            .map(|result| result.map_err(|_| fmt::Error))
+            .unwrap_or(Err(fmt::Error))?;
+
         // TODO report errors instead of flat_mapping.
-        for (id, task) in self.tasks.enumerate().flat_map(Result::ok) {
+        for id_task in self.tasks.enumerate() {
+            let (id, task) = id_task.map_err(|_| fmt::Error)?;
             let marker = if id == current_id { ">" } else { " " };
             strings.push(format!("{} {}", marker, task.projection()));
         }
@@ -265,7 +263,7 @@ pub struct BasicTask {
 impl Task for BasicTask {
     type Error = Error;
 
-    fn goto_next_status(&mut self) -> Result<(), Error> {
+    fn goto_next_status(&mut self) -> Result<()> {
         self.status = match self.status {
             Status::Wont => Status::Open,
             Status::Open => Status::Done,
@@ -274,7 +272,7 @@ impl Task for BasicTask {
         Ok(())
     }
 
-    fn goto_next_back_status(&mut self) -> Result<(), Error> {
+    fn goto_next_back_status(&mut self) -> Result<()> {
         self.status = match self.status {
             Status::Open => Status::Wont,
             Status::Done => Status::Open,
@@ -350,29 +348,28 @@ impl From<::std::io::Error> for Error {
 }
 
 trait TodoList {
-    type Id: Copy;
     type Error: std::error::Error + From<<Self::Task as Task>::Error>;
     type Task: Task;
 
-    fn create(&mut self, name: &str) -> Result<Self::Id>;
+    fn create(&mut self, name: &str) -> Result<usize, Self::Error>;
 
-    fn iter(&self) -> ResultIter<&Self::Task>;
-    fn iter_mut(&mut self) -> ResultIter<&mut Self::Task>;
-    fn into_iter<'a>(self) -> ResultIter<'a, Self::Task>;
+    fn iter(&self) -> ResultIter<&Self::Task, Self::Error>;
+    fn iter_mut(&mut self) -> ResultIter<&mut Self::Task, Self::Error>;
+    fn into_iter<'a>(self) -> ResultIter<'a, Self::Task, Self::Error>;
 
-    fn enumerate(&self) -> ResultIter<(Self::Id, &Self::Task)>;
-    fn ids(&self) -> ResultIter<Self::Id>;
+    fn enumerate(&self) -> ResultIter<(usize, &Self::Task), Self::Error>;
+    fn ids(&self) -> ResultIter<usize, Self::Error>;
 
-    fn find(&self, id: Self::Id) -> Result<&Self::Task>;
-    fn find_mut(&mut self, id: Self::Id) -> Result<&mut Self::Task>;
-    fn remove(&mut self, id: Self::Id) -> Result<Self::Task>;
+    fn find(&self, id: usize) -> Result<&Self::Task, Self::Error>;
+    fn find_mut(&mut self, id: usize) -> Result<&mut Self::Task, Self::Error>;
+    fn remove(&mut self, id: usize) -> Result<Self::Task, Self::Error>;
 }
 
 pub trait Task {
     type Error: std::error::Error;
 
-    fn goto_next_status(&mut self) -> Result<()>;
-    fn goto_next_back_status(&mut self) -> Result<()>;
+    fn goto_next_status(&mut self) -> Result<(), Self::Error>;
+    fn goto_next_back_status(&mut self) -> Result<(), Self::Error>;
 
     fn projection(&self) -> BasicTask;
 }
@@ -385,7 +382,6 @@ impl Display for BasicTask {
 }
 
 impl TodoList for FakeTodoList {
-    type Id = usize;
     type Error = Error;
     type Task = BasicTask;
 
@@ -402,29 +398,29 @@ impl TodoList for FakeTodoList {
         Ok(id)
     }
 
-    fn enumerate(&self) -> ResultIter<(Self::Id, &Self::Task)> {
+    fn enumerate(&self) -> ResultIter<(usize, &Self::Task)> {
         Box::new(self.tasks
             .iter()
             .map(|pair| Ok(pair)))
     }
 
-    fn ids(&self) -> ResultIter<Self::Id> {
+    fn ids(&self) -> ResultIter<usize> {
         Box::new(self.tasks
             .keys()
             .map(|key| Ok(key)))
     }
 
-    fn remove(&mut self, id: Self::Id) -> Result<Self::Task> {
+    fn remove(&mut self, id: usize) -> Result<Self::Task> {
         self.tasks
             .remove(id)
             .map_or(Err(Error::NoSuchTask), |task| Ok(task))
     }
 
-    fn find(&self, id: Self::Id) -> Result<&Self::Task> {
+    fn find(&self, id: usize) -> Result<&Self::Task> {
         Ok(&self.tasks[id])
     }
 
-    fn find_mut(&mut self, id: Self::Id) -> Result<&mut Self::Task> {
+    fn find_mut(&mut self, id: usize) -> Result<&mut Self::Task> {
         Ok(&mut self.tasks[id])
     }
 
@@ -480,7 +476,6 @@ impl<T> FileTask<T>
         write!(file, "{}\n{:?}", projection.name, projection.status)
     }
 }
-
 
 impl<T> Task for FileTask<T>
     where T: Task,
@@ -560,7 +555,6 @@ type ResultIter<'a, T, E = Error> = Box<Iterator<Item = Result<T, E>> + 'a>;
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 impl TodoList for FileTodoList {
-    type Id = usize;
     type Error = Error;
     type Task = FileTask;
 
@@ -582,7 +576,7 @@ impl TodoList for FileTodoList {
         Ok(id)
     }
 
-    fn enumerate(&self) -> ResultIter<(Self::Id, &Self::Task)> {
+    fn enumerate(&self) -> ResultIter<(usize, &Self::Task)> {
         match ids() {
             Ok(ids) => {
                 Box::new(ids.map(move |id| {
@@ -594,14 +588,14 @@ impl TodoList for FileTodoList {
         }
     }
 
-    fn ids(&self) -> ResultIter<Self::Id> {
+    fn ids(&self) -> ResultIter<usize> {
         match ids() {
             Ok(ids) => Box::new(ids.map(|x| Ok(x))),
             Err(err) => Box::new(vec![Err(<_>::from(err))].into_iter()),
         }
     }
 
-    fn remove(&mut self, id: Self::Id) -> Result<Self::Task> {
+    fn remove(&mut self, id: usize) -> Result<Self::Task> {
         // Load the task first so it can be moved out.
         let task = Self::load(id)?;
 
@@ -610,11 +604,11 @@ impl TodoList for FileTodoList {
         Ok(task)
     }
 
-    fn find(&self, id: Self::Id) -> Result<&Self::Task> {
+    fn find(&self, id: usize) -> Result<&Self::Task> {
         Ok(&self.cache[&id])
     }
 
-    fn find_mut(&mut self, id: Self::Id) -> Result<&mut Self::Task> {
+    fn find_mut(&mut self, id: usize) -> Result<&mut Self::Task> {
         match self.cache.get_mut(&id) {
             None => Err(Error::NoSuchTask),
             Some(task) => Ok(task),
