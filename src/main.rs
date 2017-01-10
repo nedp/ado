@@ -169,21 +169,26 @@ impl<T> TaskPicker<T>
 
     fn right(&mut self) -> Result<(), T::Error> {
         let id = self.current_id()?;
-        Ok(try!(self.tasks.find_mut(id)?
-            .goto_next_status()))
+        self.tasks
+            .find_mut(id)?
+            .goto_next_status()
+            .map_err(T::Error::from)
     }
 
     fn left(&mut self) -> Result<(), T::Error> {
         let id = self.current_id()?;
-        Ok(try!(self.tasks.find_mut(id)?
-            .goto_next_back_status()))
+        self.tasks
+            .find_mut(id)?
+            .goto_next_back_status()
+            .map_err(T::Error::from)
     }
 
     fn current_id(&self) -> Result<T::Id, T::Error> {
-        match self.tasks.ids().nth(self.position) {
-            None => Err(Error::NoSuchTask)?,
-            Some(id) => Ok(id?),
-        }
+        self.tasks
+            .ids()
+            .nth(self.position)
+            .unwrap_or(Err(Error::NoSuchTask))
+            .map_err(T::Error::from)
     }
 
     fn create(&mut self, name: String) -> Result<T::Id, T::Error> {
@@ -349,25 +354,25 @@ trait TodoList {
     type Error: std::error::Error + From<<Self::Task as Task>::Error>;
     type Task: Task;
 
-    fn create(&mut self, name: &str) -> Result<Self::Id, Self::Error>;
+    fn create(&mut self, name: &str) -> Result<Self::Id>;
 
-    fn iter<'a>(&'a self) -> Box<Iterator<Item = Result<&'a Self::Task, Self::Error>> + 'a>;
-    fn iter_mut<'a>(&'a mut self) -> Box<Iterator<Item = Result<&'a mut Self::Task, Self::Error>> + 'a>;
-    fn into_iter(self) -> Box<Iterator<Item = Result<Self::Task, Self::Error>>>;
+    fn iter(&self) -> ResultIter<&Self::Task>;
+    fn iter_mut(&mut self) -> ResultIter<&mut Self::Task>;
+    fn into_iter<'a>(self) -> ResultIter<'a, Self::Task>;
 
-    fn enumerate<'a>(&'a self) -> Box<Iterator<Item = Result<(Self::Id, &'a Self::Task), Self::Error>> + 'a>;
-    fn ids<'a>(&'a self) -> Box<Iterator<Item = Result<Self::Id, Self::Error>> + 'a>;
+    fn enumerate(&self) -> ResultIter<(Self::Id, &Self::Task)>;
+    fn ids(&self) -> ResultIter<Self::Id>;
 
-    fn find(&self, id: Self::Id) -> Result<&Self::Task, Self::Error>;
-    fn find_mut(&mut self, id: Self::Id) -> Result<&mut Self::Task, Self::Error>;
-    fn remove(&mut self, id: Self::Id) -> Result<Self::Task, Self::Error>;
+    fn find(&self, id: Self::Id) -> Result<&Self::Task>;
+    fn find_mut(&mut self, id: Self::Id) -> Result<&mut Self::Task>;
+    fn remove(&mut self, id: Self::Id) -> Result<Self::Task>;
 }
 
 pub trait Task {
     type Error: std::error::Error;
 
-    fn goto_next_status(&mut self) -> Result<(), Self::Error>;
-    fn goto_next_back_status(&mut self) -> Result<(), Self::Error>;
+    fn goto_next_status(&mut self) -> Result<()>;
+    fn goto_next_back_status(&mut self) -> Result<()>;
 
     fn projection(&self) -> BasicTask;
 }
@@ -397,44 +402,49 @@ impl TodoList for FakeTodoList {
         Ok(id)
     }
 
-    fn enumerate<'a>(&'a self) -> Box<Iterator<Item = Result<(Self::Id, &'a Self::Task), Self::Error>> + 'a> {
-        Box::new(self.tasks.iter()
-                 .map(|pair| Ok(pair)))
+    fn enumerate(&self) -> ResultIter<(Self::Id, &Self::Task)> {
+        Box::new(self.tasks
+            .iter()
+            .map(|pair| Ok(pair)))
     }
 
-    fn ids<'a>(&'a self) -> Box<Iterator<Item = Result<Self::Id, Self::Error>> + 'a> {
-        Box::new(self.tasks.keys()
-                 .map(|key| Ok(key)))
+    fn ids(&self) -> ResultIter<Self::Id> {
+        Box::new(self.tasks
+            .keys()
+            .map(|key| Ok(key)))
     }
 
-    fn remove(&mut self, id: Self::Id) -> Result<Self::Task, Self::Error> {
+    fn remove(&mut self, id: Self::Id) -> Result<Self::Task> {
         self.tasks
             .remove(id)
             .map_or(Err(Error::NoSuchTask), |task| Ok(task))
     }
 
-    fn find(&self, id: Self::Id) -> Result<&Self::Task, Self::Error> {
+    fn find(&self, id: Self::Id) -> Result<&Self::Task> {
         Ok(&self.tasks[id])
     }
 
-    fn find_mut(&mut self, id: Self::Id) -> Result<&mut Self::Task, Self::Error> {
+    fn find_mut(&mut self, id: Self::Id) -> Result<&mut Self::Task> {
         Ok(&mut self.tasks[id])
     }
 
-    fn iter<'a>(&'a self) -> Box<Iterator<Item = Result<&'a Self::Task, Self::Error>> + 'a> {
-        let iter = self.tasks.iter()
+    fn iter(&self) -> ResultIter<&Self::Task> {
+        let iter = self.tasks
+            .iter()
             .map(|(_, task)| Ok(task));
         Box::new(iter)
     }
 
-    fn iter_mut<'a>(&'a mut self) -> Box<Iterator<Item = Result<&'a mut Self::Task, Self::Error>> + 'a> {
-        let iter = self.tasks.iter_mut()
+    fn iter_mut(&mut self) -> ResultIter<&mut Self::Task> {
+        let iter = self.tasks
+            .iter_mut()
             .map(|(_, task)| Ok(task));
         Box::new(iter)
     }
 
-    fn into_iter(self) -> Box<Iterator<Item = Result<Self::Task, Self::Error>>> {
-        let iter = self.tasks.into_iter()
+    fn into_iter<'a>(self) -> ResultIter<'a, Self::Task> {
+        let iter = self.tasks
+            .into_iter()
             .map(|(_, task)| Ok(task));
         Box::new(iter)
     }
@@ -451,9 +461,9 @@ pub struct FileTask<T = BasicTask> {
     inner: T,
 }
 
-impl <T> FileTask<T>
-where T: Task,
-      Error: From<T::Error>
+impl<T> FileTask<T>
+    where T: Task,
+          Error: From<T::Error>
 {
     fn new(inner: T, file_name: String) -> Result<FileTask<T>, ::std::io::Error> {
         let task = FileTask {
@@ -472,9 +482,9 @@ where T: Task,
 }
 
 
-impl <T> Task for FileTask<T>
-where T: Task,
-      Error: From<T::Error>
+impl<T> Task for FileTask<T>
+    where T: Task,
+          Error: From<T::Error>
 {
     type Error = Error;
 
@@ -494,7 +504,7 @@ where T: Task,
 }
 
 impl FileTodoList {
-    pub fn new() -> Result<FileTodoList, Error> {
+    pub fn new() -> Result<FileTodoList> {
         ::std::fs::DirBuilder::new()
             .recursive(true)
             .create(PATH)
@@ -514,7 +524,7 @@ impl FileTodoList {
             match self.cache.insert(id, task) {
                 // TODO handle this gracefully
                 Some(_) => panic!("Loaded the same task twice"),
-                _ => {},
+                _ => {}
             };
         }
         Ok(())
@@ -539,16 +549,22 @@ impl FileTodoList {
             name: String::from(lines[0]),
             status: Status::from(lines[1]),
         };
-        Ok(FileTask { file_name: Self::file_name(id), inner: inner })
+        Ok(FileTask {
+            file_name: Self::file_name(id),
+            inner: inner,
+        })
     }
 }
+
+type ResultIter<'a, T, E = Error> = Box<Iterator<Item = Result<T, E>> + 'a>;
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 impl TodoList for FileTodoList {
     type Id = usize;
     type Error = Error;
     type Task = FileTask;
 
-    fn create(&mut self, name: &str) -> Result<usize, Error> {
+    fn create(&mut self, name: &str) -> Result<usize> {
         let id = self.next_id;
         self.next_id += 1;
 
@@ -566,24 +582,26 @@ impl TodoList for FileTodoList {
         Ok(id)
     }
 
-    fn enumerate<'a>(&'a self) -> Box<Iterator<Item = Result<(Self::Id, &'a Self::Task), Self::Error>> + 'a> {
+    fn enumerate(&self) -> ResultIter<(Self::Id, &Self::Task)> {
         match ids() {
-            Ok(ids) => Box::new(ids.map(move |id| {
-                let task = &self.cache[&id];
-                Ok((id, task))
-            })),
+            Ok(ids) => {
+                Box::new(ids.map(move |id| {
+                    let task = &self.cache[&id];
+                    Ok((id, task))
+                }))
+            }
             Err(err) => Box::new(vec![Err(<_>::from(err))].into_iter()),
         }
     }
 
-    fn ids<'a>(&'a self) -> Box<Iterator<Item = Result<Self::Id, Self::Error>> + 'a> {
+    fn ids(&self) -> ResultIter<Self::Id> {
         match ids() {
             Ok(ids) => Box::new(ids.map(|x| Ok(x))),
             Err(err) => Box::new(vec![Err(<_>::from(err))].into_iter()),
         }
     }
 
-    fn remove(&mut self, id: Self::Id) -> Result<Self::Task, Self::Error> {
+    fn remove(&mut self, id: Self::Id) -> Result<Self::Task> {
         // Load the task first so it can be moved out.
         let task = Self::load(id)?;
 
@@ -592,31 +610,34 @@ impl TodoList for FileTodoList {
         Ok(task)
     }
 
-    fn find(&self, id: Self::Id) -> Result<&Self::Task, Self::Error> {
+    fn find(&self, id: Self::Id) -> Result<&Self::Task> {
         Ok(&self.cache[&id])
     }
 
-    fn find_mut(&mut self, id: Self::Id) -> Result<&mut Self::Task, Self::Error> {
+    fn find_mut(&mut self, id: Self::Id) -> Result<&mut Self::Task> {
         match self.cache.get_mut(&id) {
             None => Err(Error::NoSuchTask),
             Some(task) => Ok(task),
         }
     }
 
-    fn iter<'a>(&'a self) -> Box<Iterator<Item = Result<&'a Self::Task, Self::Error>> + 'a> {
-        let iter = self.cache.iter()
+    fn iter(&self) -> ResultIter<&Self::Task> {
+        let iter = self.cache
+            .iter()
             .map(|(_, task)| Ok(task));
         Box::new(iter)
     }
 
-    fn iter_mut<'a>(&'a mut self) -> Box<Iterator<Item = Result<&'a mut Self::Task, Self::Error>> + 'a> {
-        let iter = self.cache.iter_mut()
+    fn iter_mut(&mut self) -> ResultIter<&mut Self::Task> {
+        let iter = self.cache
+            .iter_mut()
             .map(|(_, task)| Ok(task));
         Box::new(iter)
     }
 
-    fn into_iter(self) -> Box<Iterator<Item = Result<Self::Task, Self::Error>>> {
-        let iter = self.cache.into_iter()
+    fn into_iter<'a>(self) -> ResultIter<'a, Self::Task> {
+        let iter = self.cache
+            .into_iter()
             .map(|(_, task)| Ok(task));
         Box::new(iter)
     }
@@ -625,7 +646,7 @@ impl TodoList for FileTodoList {
 fn ids() -> Result<Box<Iterator<Item = usize>>, ::std::io::Error> {
     let read_dir = ::std::fs::read_dir(PATH)?;
 
-    // TODO: Report errors in some way.
+    // TODO: Report errors in some way instead of swallowing them in flat_map.
     // Get a usize for each file name in the data path, where possible.
     let mut ids = read_dir.flat_map(Result::ok)
         .map(|entry| entry.file_name())
