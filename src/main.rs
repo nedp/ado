@@ -225,8 +225,8 @@ impl<T> Display for TaskPicker<T>
         let mut strings = Vec::new();
 
         // TODO report errors instead of flat_mapping.
-        for (position, id_task) in self.tasks.enumerate().enumerate() {
-            let (_, task) = id_task.map_err(|_| fmt::Error)?;
+        for (position, task) in self.tasks.sorted().enumerate() {
+            let task = task.map_err(|_| fmt::Error)?;
             let marker = if position == self.position { ">" } else { " " };
             strings.push(format!("{} {}", marker, task.projection()));
         }
@@ -353,7 +353,18 @@ trait TodoList {
     fn into_iter<'a>(self) -> ResultIter<'a, Self::Task, Self::Error>;
 
     fn enumerate(&self) -> ResultIter<(usize, &Self::Task), Self::Error>;
-    fn ids(&self) -> ResultIter<usize, Self::Error>;
+    fn ids(&self) -> ResultIter<usize, Self::Error> {
+        // By default we can drop the tasks from the enumerate output.
+        Box::new(
+            self.enumerate()
+            .map(|result| result.map(|(id, _)| id)))
+    }
+    fn sorted(&self) -> ResultIter<&Self::Task, Self::Error> {
+        // By default we can drop the ids from the enumerate output.
+        Box::new(
+            self.enumerate()
+            .map(|result| result.map(|(_, task)| task)))
+    }
 
     fn find(&self, id: usize) -> Result<&Self::Task, Self::Error>;
     fn find_mut(&mut self, id: usize) -> Result<&mut Self::Task, Self::Error>;
@@ -399,12 +410,6 @@ impl TodoList for FakeTodoList {
             .map(|pair| Ok(pair)))
     }
 
-    fn ids(&self) -> ResultIter<usize> {
-        Box::new(self.tasks
-            .keys()
-            .map(|key| Ok(key)))
-    }
-
     fn remove(&mut self, id: usize) -> Result<Self::Task> {
         self.tasks
             .remove(id)
@@ -443,8 +448,8 @@ impl TodoList for FakeTodoList {
 
 /// A Task source backed by flat files.
 pub struct FileTodoList {
-    next_id: usize,
     cache: HashMap<usize, FileTask<BasicTask>>,
+    ids: Vec<usize>,
 }
 
 pub struct FileTask<T = BasicTask> {
@@ -501,7 +506,7 @@ impl FileTodoList {
             .unwrap();
 
         let mut todo_list = FileTodoList {
-            next_id: ids()?.max().unwrap_or(0) + 1,
+            ids: ids()?,
             cache: HashMap::new(),
         };
         try!(todo_list.load_all());
@@ -509,7 +514,7 @@ impl FileTodoList {
     }
 
     fn load_all(&mut self) -> Result<(), ::std::io::Error> {
-        for id in ids()? {
+        for &id in self.ids.iter() {
             let task = Self::load(id)?;
             match self.cache.insert(id, task) {
                 // TODO handle this gracefully
@@ -554,8 +559,7 @@ impl TodoList for FileTodoList {
     type Task = FileTask;
 
     fn create(&mut self, name: &str) -> Result<usize> {
-        let id = self.next_id;
-        self.next_id += 1;
+        let id = self.ids.last().unwrap_or(&0) + 1;
 
         let inner = BasicTask {
             status: Status::Open,
@@ -572,22 +576,10 @@ impl TodoList for FileTodoList {
     }
 
     fn enumerate(&self) -> ResultIter<(usize, &Self::Task)> {
-        match ids() {
-            Ok(ids) => {
-                Box::new(ids.map(move |id| {
-                    let task = &self.cache[&id];
-                    Ok((id, task))
-                }))
-            }
-            Err(err) => Box::new(vec![Err(<_>::from(err))].into_iter()),
-        }
-    }
-
-    fn ids(&self) -> ResultIter<usize> {
-        match ids() {
-            Ok(ids) => Box::new(ids.map(|x| Ok(x))),
-            Err(err) => Box::new(vec![Err(<_>::from(err))].into_iter()),
-        }
+        Box::new(
+            self.ids
+            .iter()
+            .map(move |&id| Ok((id, &self.cache[&id]))))
     }
 
     fn remove(&mut self, id: usize) -> Result<Self::Task> {
@@ -632,7 +624,7 @@ impl TodoList for FileTodoList {
     }
 }
 
-fn ids() -> Result<Box<Iterator<Item = usize>>, ::std::io::Error> {
+fn ids() -> Result<Vec<usize>, ::std::io::Error> {
     let read_dir = ::std::fs::read_dir(PATH)?;
 
     // TODO: Report errors in some way instead of swallowing them in flat_map.
@@ -644,5 +636,5 @@ fn ids() -> Result<Box<Iterator<Item = usize>>, ::std::io::Error> {
         .collect::<Vec<_>>();
 
     ids.sort();
-    Ok(Box::new(ids.into_iter()))
+    Ok(ids)
 }
