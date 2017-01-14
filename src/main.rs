@@ -264,7 +264,7 @@ impl<T> Display for TaskPicker<T>
             strings.push(format!("{} {}", marker, task.projection()));
         }
 
-        write!(f, "  Wont Open Done\n{}", strings.join("\n"))
+        write!(f, "  WONT TODO DONE\n{}", strings.join("\n"))
     }
 }
 
