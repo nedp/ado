@@ -572,6 +572,8 @@ impl TodoList for FileTodoList {
             // TODO Handle gracefully
             panic!("Created preexisting task");
         }
+        self.ids.push(id);
+
         Ok(id)
     }
 
@@ -582,12 +584,17 @@ impl TodoList for FileTodoList {
             .map(move |&id| Ok((id, &self.cache[&id]))))
     }
 
-    fn remove(&mut self, id: usize) -> Result<Self::Task> {
-        // Load the task first so it can be moved out.
-        let task = Self::load(id)?;
-
+    fn remove(&mut self, id: usize) -> ado::Result<Self::Task> {
+        // Fail fast if our file access is broken.
         fs::remove_file(&format!("{}/{:05}", PATH, id))?;
 
+        // Load the task and remove it from the cache.
+        let index = self.ids.binary_search(&id)
+            .map_err(|_| Error::NoSuchTask)?;
+        self.ids.remove(index);
+
+        // If the task isn't present, the index search should have failed.
+        let task = self.cache.remove(&id).unwrap();
         Ok(task)
     }
 
